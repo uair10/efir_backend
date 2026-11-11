@@ -1,0 +1,11 @@
+/bin/
+*.exe
+*.test
+coverage.out
+*.prof
+.idea/workspace.xml
+.idea/shelf/
+.DS_Store
+.env
+.mcp.json
+.claude/settings.local.json
