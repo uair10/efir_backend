@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/uair10/efir_backend/internal/channel"
 	"github.com/uair10/efir_backend/internal/httpapi"
 	"github.com/uair10/efir_backend/internal/infrastructure/config"
 	"github.com/uair10/efir_backend/internal/infrastructure/logging"
@@ -34,7 +35,8 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	server := httpapi.New(logger, cfg.Server)
+	registry := channel.NewRegistry(cfg.Game.MaxChannels)
+	server := httpapi.New(logger, cfg.Server, registry)
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.Listen(ctx) }()

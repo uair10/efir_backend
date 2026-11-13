@@ -12,6 +12,9 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
+	"github.com/uair10/efir_backend/internal/channel"
+	"github.com/uair10/efir_backend/internal/httpapi/routes"
+
 	"github.com/uair10/efir_backend/internal/httpapi/middleware"
 	"github.com/uair10/efir_backend/internal/infrastructure/config"
 )
@@ -23,11 +26,11 @@ type Server struct {
 }
 
 // New собирает http.Server с роутером и таймаутами из конфига.
-func New(logger *slog.Logger, cfg config.Server) *Server {
+func New(logger *slog.Logger, cfg config.Server, registry *channel.Registry) *Server {
 	return &Server{
 		httpServer: &http.Server{
 			Addr:              cfg.Addr(),
-			Handler:           newHandler(logger, cfg),
+			Handler:           newHandler(logger, cfg, registry),
 			ReadHeaderTimeout: cfg.ReadHeaderTimeout,
 			ReadTimeout:       cfg.ReadTimeout,
 			WriteTimeout:      cfg.WriteTimeout,
@@ -40,18 +43,21 @@ func New(logger *slog.Logger, cfg config.Server) *Server {
 
 // newHandler собирает роутер и оборачивает его в middleware.
 // Отдельно от New, чтобы роутер можно было тестировать без http.Server.
-func newHandler(logger *slog.Logger, cfg config.Server) http.Handler {
+// registry - общий на все запросы реестр каналов, создаётся один раз в main.
+func newHandler(logger *slog.Logger, cfg config.Server, registry *channel.Registry) http.Handler {
 	mux := http.NewServeMux()
 
 	api := newAPI(mux, cfg)
-	registerRoutes(api)
+	registerRoutes(api, registry)
 
 	// Оборачиваем mux в middleware - они работают и для Huma, и для ручных роутов.
 	return withMiddleware(mux, logger, cfg.MaxBodyBytes)
 }
 
 // registerRoutes регистрирует эндпоинты в Huma.
-func registerRoutes(api huma.API) {
+func registerRoutes(api huma.API, registry *channel.Registry) {
+	channels := routes.NewChannels(registry)
+
 	huma.Register(api, huma.Operation{
 		OperationID:   "getHealthz",
 		Method:        http.MethodGet,
@@ -59,7 +65,32 @@ func registerRoutes(api huma.API) {
 		Summary:       "Healthcheck",
 		Tags:          []string{"system"},
 		DefaultStatus: http.StatusOK,
-	}, healthzHumaHandler)
+	}, routes.HealthzHumaHandler)
+	huma.Register(api, huma.Operation{
+		OperationID:   "createChannel",
+		Method:        http.MethodPost,
+		Path:          "/api/channels",
+		Summary:       "Открыть канал",
+		Tags:          []string{"channels"},
+		DefaultStatus: http.StatusCreated,
+		Errors: []int{
+			http.StatusUnprocessableEntity,
+			http.StatusServiceUnavailable,
+		},
+	}, channels.Create)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "joinChannel",
+		Method:      http.MethodPost,
+		Path:        "/api/channels/{code}/players",
+		Summary:     "Войти по коду",
+		Tags:        []string{"channels"},
+		Errors: []int{
+			http.StatusNotFound,
+			http.StatusConflict,
+			http.StatusUnprocessableEntity,
+		},
+	}, channels.Join)
 }
 
 // withMiddleware оборачивает роутер в middleware. Тесты передают сюда свой mux.

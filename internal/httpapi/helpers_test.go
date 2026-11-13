@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/uair10/efir_backend/internal/channel"
 	"github.com/uair10/efir_backend/internal/httpapi/requestid"
 	"github.com/uair10/efir_backend/internal/infrastructure/config"
 )
@@ -40,7 +41,7 @@ func testConfig() config.Server {
 func newTestAPIHandler(logger *slog.Logger, cfg config.Server, register func(api huma.API)) http.Handler {
 	mux := http.NewServeMux()
 	api := newAPI(mux, cfg)
-	registerRoutes(api)
+	registerRoutes(api, testRegistry())
 	if register != nil {
 		register(api)
 	}
@@ -115,3 +116,6 @@ func errorLocations(t *testing.T, body map[string]any) []string {
 	slices.Sort(locations)
 	return locations
 }
+
+// testRegistry - реестр для тестов, которым каналы не важны.
+func testRegistry() *channel.Registry { return channel.NewRegistry(10) }

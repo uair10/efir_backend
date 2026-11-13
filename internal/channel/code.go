@@ -51,3 +51,13 @@ func ParseCode(s string) (Code, error) {
 func (c Code) IsEmpty() bool { return c.value == "" }
 
 func (c Code) String() string { return c.value }
+
+// UnmarshalText парсит код из json.
+func (c *Code) UnmarshalText(text []byte) error {
+	parsed, err := ParseCode(string(text))
+	if err != nil {
+		return err
+	}
+	*c = parsed
+	return nil
+}

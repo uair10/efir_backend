@@ -18,7 +18,7 @@ func newTestServer(t *testing.T, port int) *Server {
 	t.Helper()
 	cfg := testConfig()
 	cfg.Port = port
-	return New(slog.New(slog.DiscardHandler), cfg)
+	return New(slog.New(slog.DiscardHandler), cfg, testRegistry())
 }
 
 func TestServerRoutes(t *testing.T) {
@@ -73,7 +73,7 @@ func TestServerRoutes(t *testing.T) {
 		},
 	}
 
-	handler := newHandler(slog.New(slog.DiscardHandler), testConfig())
+	handler := newHandler(slog.New(slog.DiscardHandler), testConfig(), testRegistry())
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
