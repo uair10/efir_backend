@@ -24,7 +24,8 @@ func TestLoad(t *testing.T) {
 			MaxBodyBytes:      1 << 20,
 			DocsEnabled:       false,
 		},
-		Log: Log{Level: slog.LevelInfo},
+		Log:  Log{Level: slog.LevelInfo},
+		Game: Game{MaxChannels: 500},
 	}
 
 	overridden := defaults
@@ -32,6 +33,7 @@ func TestLoad(t *testing.T) {
 	overridden.Server.ShutdownTimeout = 3 * time.Second
 	overridden.Server.MaxBodyBytes = 512
 	overridden.Log.Level = slog.LevelDebug
+	overridden.Game.MaxChannels = 7
 
 	tests := []struct {
 		name     string
@@ -51,6 +53,7 @@ func TestLoad(t *testing.T) {
 				"SERVER_SHUTDOWN_TIMEOUT": "3s",
 				"SERVER_MAX_BODY_BYTES":   "512",
 				"LOG_LEVEL":               "debug",
+				"GAME_MAX_CHANNELS":       "7",
 			},
 			want: overridden,
 		},
@@ -76,8 +79,9 @@ func TestLoad(t *testing.T) {
 				"SERVER_PORT":           "0",
 				"SERVER_READ_TIMEOUT":   "-1s",
 				"SERVER_MAX_BODY_BYTES": "0",
+				"GAME_MAX_CHANNELS":     "0",
 			},
-			wantErrs: []string{"SERVER_PORT", "SERVER_READ_TIMEOUT", "SERVER_MAX_BODY_BYTES"},
+			wantErrs: []string{"SERVER_PORT", "SERVER_READ_TIMEOUT", "SERVER_MAX_BODY_BYTES", "GAME_MAX_CHANNELS"},
 		},
 		{
 			name: "несколько ошибок разбора сразу",

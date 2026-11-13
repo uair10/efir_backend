@@ -20,6 +20,7 @@ type (
 	Config struct {
 		Server Server `envPrefix:"SERVER_"`
 		Log    Log
+		Game   Game `envPrefix:"GAME_"`
 	}
 
 	// Server - настройки HTTP-сервера.
@@ -33,6 +34,11 @@ type (
 		IdleTimeout       time.Duration `env:"IDLE_TIMEOUT" envDefault:"60s"`
 		MaxBodyBytes      int64         `env:"MAX_BODY_BYTES" envDefault:"1048576"` // 1 MiB
 		DocsEnabled       bool          `env:"DOCS_ENABLED" envDefault:"false"`
+	}
+
+	// Game - настройки игры.
+	Game struct {
+		MaxChannels int `env:"MAX_CHANNELS" envDefault:"500"`
 	}
 
 	// Log - настройки логирования.
@@ -89,6 +95,7 @@ func (c Config) validate() error {
 	}
 
 	check(c.Server.MaxBodyBytes > 0, "SERVER_MAX_BODY_BYTES must be positive, got %d", c.Server.MaxBodyBytes)
+	check(c.Game.MaxChannels > 0, "GAME_MAX_CHANNELS must be positive, got %d", c.Game.MaxChannels)
 
 	if len(problems) == 0 {
 		return nil

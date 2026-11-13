@@ -26,7 +26,7 @@ func TestRouteErrorsAsProblem(t *testing.T) {
 		{"неверный метод", http.MethodPost, "/healthz", http.StatusMethodNotAllowed, "GET, HEAD"},
 	}
 
-	handler := newHandler(slog.New(slog.DiscardHandler), testConfig())
+	handler := newHandler(slog.New(slog.DiscardHandler), testConfig(), testRegistry())
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
