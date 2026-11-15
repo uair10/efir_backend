@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -36,7 +37,7 @@ func run() error {
 	defer stop()
 
 	registry := channel.NewRegistry(cfg.Game.MaxChannels)
-	server := httpapi.New(logger, cfg.Server, registry)
+	server := httpapi.New(logger, cfg.Server, registry, httpapi.WithGame(cfg.Game))
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.Listen(ctx) }()
@@ -53,7 +54,17 @@ func run() error {
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.Server.ShutdownTimeout)
 	defer cancel()
 
-	if err := server.Shutdown(shutdownCtx); err != nil {
+	// Порядок важен:
+	//  1. HTTP: новых каналов и подключений больше не будет.
+	//  2. Каналы: Shutdown не трогает WebSocket (соединения перехвачены через
+	//     Hijack), поэтому закрываем их сами - клиентам уходит 1001. Даже если
+	//     Shutdown не уложился в таймаут, каналы все равно закрываем.
+	//  3. Ждем, пока close-кадры уйдут, иначе процесс выйдет раньше и клиент
+	//     увидит обрыв (1006) вместо 1001.
+	shutdownErr := server.Shutdown(shutdownCtx)
+	registry.Close()
+	socketsErr := server.WaitWebSockets(shutdownCtx)
+	if err := errors.Join(shutdownErr, socketsErr); err != nil {
 		return fmt.Errorf("stop server: %w", err)
 	}
 	logger.Info("server stopped")

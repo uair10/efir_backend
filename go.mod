@@ -10,6 +10,7 @@ tool (
 
 require (
 	github.com/caarlos0/env/v11 v11.4.1
+	github.com/coder/websocket v1.8.15
 	github.com/danielgtaylor/huma/v2 v2.40.0
 	github.com/stretchr/testify v1.12.1
 )

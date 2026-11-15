@@ -38,7 +38,7 @@ func newPlayer(callsign Callsign, token Token) *Player {
 	return &Player{Callsign: callsign, token: token}
 }
 
-// newBot - бот одиночной смены: без токена, сразу готов (BR-1.3).
+// newBot - бот одиночной смены: без токена, сразу готов.
 func newBot() *Player {
 	return &Player{Callsign: CallsignSecond, Ready: true, Bot: true}
 }

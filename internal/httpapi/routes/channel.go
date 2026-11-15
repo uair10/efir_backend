@@ -98,6 +98,8 @@ func toHTTPError(err error) error {
 		return huma.Error409Conflict("channel is full")
 	case errors.Is(err, channel.ErrTooManyChannels):
 		return huma.Error503ServiceUnavailable("too many channels")
+	case errors.Is(err, channel.ErrRegistryClosed):
+		return huma.Error503ServiceUnavailable("server is shutting down")
 	default:
 		return fmt.Errorf("channels: %w", err)
 	}
