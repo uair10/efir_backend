@@ -52,6 +52,11 @@ func (c Code) IsEmpty() bool { return c.value == "" }
 
 func (c Code) String() string { return c.value }
 
+// MarshalText переводит код в байты.
+func (c Code) MarshalText() ([]byte, error) {
+	return []byte(c.value), nil
+}
+
 // UnmarshalText парсит код из json.
 func (c *Code) UnmarshalText(text []byte) error {
 	parsed, err := ParseCode(string(text))

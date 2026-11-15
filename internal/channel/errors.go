@@ -16,4 +16,10 @@ var (
 	ErrInvalidCode = errors.New("invalid channel code")
 	// ErrInvalidToken - строка не похожа на токен игрока (ParseToken).
 	ErrInvalidToken = errors.New("invalid player token")
+	// ErrUnauthorized - токен не принадлежит ни одному посту канала (Connect).
+	ErrUnauthorized = errors.New("unauthorized access")
+	// ErrChannelClosed - горутина канала остановлена: Remove или Close реестра.
+	ErrChannelClosed = errors.New("channel closed")
+	// ErrRegistryClosed - реестр закрыт (сервер останавливается), новых каналов нет.
+	ErrRegistryClosed = errors.New("registry closed")
 )

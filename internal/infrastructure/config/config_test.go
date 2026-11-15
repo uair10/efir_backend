@@ -24,8 +24,12 @@ func TestLoad(t *testing.T) {
 			MaxBodyBytes:      1 << 20,
 			DocsEnabled:       false,
 		},
-		Log:  Log{Level: slog.LevelInfo},
-		Game: Game{MaxChannels: 500},
+		Log: Log{Level: slog.LevelInfo},
+		Game: Game{
+			MaxChannels:       500,
+			WSMaxMessageBytes: 4096,
+			WSAllowedOrigins:  []string{"localhost:5173"},
+		},
 	}
 
 	overridden := defaults
@@ -34,6 +38,8 @@ func TestLoad(t *testing.T) {
 	overridden.Server.MaxBodyBytes = 512
 	overridden.Log.Level = slog.LevelDebug
 	overridden.Game.MaxChannels = 7
+	overridden.Game.WSMaxMessageBytes = 8192
+	overridden.Game.WSAllowedOrigins = []string{"localhost:5173", "efir.example.com"}
 
 	tests := []struct {
 		name     string
@@ -54,8 +60,32 @@ func TestLoad(t *testing.T) {
 				"SERVER_MAX_BODY_BYTES":   "512",
 				"LOG_LEVEL":               "debug",
 				"GAME_MAX_CHANNELS":       "7",
+				"GAME_WS_MAX_MESSAGE":     "8192",
+				"GAME_WS_ALLOWED_ORIGINS": "localhost:5173,efir.example.com",
 			},
 			want: overridden,
+		},
+		{
+			name:     "GAME_WS_MAX_MESSAGE 0",
+			env:      map[string]string{"GAME_WS_MAX_MESSAGE": "0"},
+			wantErrs: []string{"GAME_WS_MAX_MESSAGE must be positive"},
+		},
+		{
+			// OriginPatterns coder/websocket сравнивает с хостом, схема не совпадет никогда.
+			name:     "GAME_WS_ALLOWED_ORIGINS со схемой",
+			env:      map[string]string{"GAME_WS_ALLOWED_ORIGINS": "http://localhost:5173"},
+			wantErrs: []string{"GAME_WS_ALLOWED_ORIGINS"},
+		},
+		{
+			name:     "GAME_WS_ALLOWED_ORIGINS с битым шаблоном",
+			env:      map[string]string{"GAME_WS_ALLOWED_ORIGINS": "localhost:5173,[bad"},
+			wantErrs: []string{"GAME_WS_ALLOWED_ORIGINS"},
+		},
+		{
+			// env режет по запятой без trim: " b" не совпал бы ни с одним Origin.
+			name:     "GAME_WS_ALLOWED_ORIGINS с пробелом после запятой",
+			env:      map[string]string{"GAME_WS_ALLOWED_ORIGINS": "localhost:5173, efir.example.com"},
+			wantErrs: []string{"GAME_WS_ALLOWED_ORIGINS"},
 		},
 		{
 			name:     "порт 0",

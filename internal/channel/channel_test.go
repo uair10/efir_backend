@@ -2,6 +2,7 @@ package channel
 
 import (
 	"errors"
+	"log/slog"
 	"sync"
 	"testing"
 
@@ -14,8 +15,14 @@ import (
 func newTestChannel(t *testing.T, mode GameMode) (*Channel, Token) {
 	t.Helper()
 
-	ch, tok, err := newChannel("c_test", mustCode(t, "482117"), mode)
+	ch, tok, err := newChannel("c_test", mustCode(t, "482117"), mode, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
+	// Join рассылает лобби через горутину канала: без Start он зависнет.
+	ch.Start()
+	t.Cleanup(func() {
+		ch.Stop(CloseReasonChannelClosed)
+		ch.Wait()
+	})
 	require.NotNil(t, ch)
 	require.False(t, tok.IsEmpty())
 	return ch, tok

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 )
 
@@ -27,10 +28,12 @@ var errEmptyCode = errors.New("code generator returned empty code")
 type Registry struct {
 	maxChannels int
 	codeGen     func() (Code, error)
+	logger      *slog.Logger
 
 	mu     sync.Mutex
 	byID   map[string]*Channel // все каналы, включая одиночные
 	byCode map[Code]*Channel   // тоже все: одиночный канал занимает код
+	closed bool                // после Close: Create отказывает, иначе канал не остановит никто
 }
 
 // Option настраивает Registry при создании.
@@ -42,11 +45,17 @@ func WithCodeGenerator(gen func() (Code, error)) Option {
 	return func(r *Registry) { r.codeGen = gen }
 }
 
+// WithLogger задает логгер, который получат каналы реестра.
+func WithLogger(l *slog.Logger) Option {
+	return func(r *Registry) { r.logger = l }
+}
+
 // NewRegistry создает пустой реестр на maxChannels каналов (GAME_MAX_CHANNELS).
 func NewRegistry(maxChannels int, opts ...Option) *Registry {
 	r := &Registry{
 		maxChannels: maxChannels,
 		codeGen:     newCode,
+		logger:      slog.Default(),
 		byID:        make(map[string]*Channel),
 		byCode:      make(map[Code]*Channel),
 	}
@@ -63,6 +72,7 @@ func NewRegistry(maxChannels int, opts ...Option) *Registry {
 // получат один код или вместе превысят лимит.
 //
 // Ошибки:
+//   - ErrRegistryClosed - реестр закрыт (сервер останавливается).
 //   - ErrTooManyChannels - каналов уже maxChannels; генератор кодов
 //     при этом не вызывается.
 //   - ErrCodeCollision - maxCodeAttempts кодов подряд заняты.
@@ -70,6 +80,9 @@ func NewRegistry(maxChannels int, opts ...Option) *Registry {
 func (r *Registry) Create(mode GameMode) (*Channel, Token, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.closed {
+		return nil, Token{}, ErrRegistryClosed
+	}
 	if len(r.byID) >= r.maxChannels {
 		return nil, Token{}, ErrTooManyChannels
 	}
@@ -81,13 +94,36 @@ func (r *Registry) Create(mode GameMode) (*Channel, Token, error) {
 	if err != nil {
 		return nil, Token{}, fmt.Errorf("registry: create channel: %w", err)
 	}
-	ch, tok, err := newChannel(id, code, mode)
+	ch, tok, err := newChannel(id, code, mode, r.logger)
 	if err != nil {
 		return nil, Token{}, fmt.Errorf("registry: create channel: %w", err)
 	}
 	r.byID[id] = ch
 	r.byCode[code] = ch
+	ch.Start() // после вставки: ByID уже находит канал
 	return ch, tok, nil
+}
+
+// Close останавливает все каналы причиной CloseReasonShutdown (клиенты
+// получат 1001) и ждет, пока их горутины выйдут. Реестр после этого пуст,
+// а Create отвечает ErrRegistryClosed. Повторный вызов ничего не делает.
+func (r *Registry) Close() {
+	r.mu.Lock()
+	r.closed = true
+	chans := make([]*Channel, 0, len(r.byID))
+	for _, ch := range r.byID {
+		chans = append(chans, ch)
+	}
+	r.byID = make(map[string]*Channel)
+	r.byCode = make(map[Code]*Channel)
+	r.mu.Unlock()
+
+	for _, ch := range chans {
+		ch.Stop(CloseReasonShutdown)
+	}
+	for _, ch := range chans {
+		ch.Wait()
+	}
 }
 
 // ByCode ищет канал для входа гостя; дальше гость входит через ch.Join().
@@ -127,6 +163,7 @@ func (r *Registry) Remove(id string) {
 	}
 	delete(r.byID, id)
 	delete(r.byCode, ch.code)
+	ch.Stop(CloseReasonChannelClosed) // не блокирует; клиенты получат 1000
 }
 
 // Len - число открытых каналов, включая одиночные.

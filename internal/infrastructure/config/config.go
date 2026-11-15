@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -38,7 +39,10 @@ type (
 
 	// Game - настройки игры.
 	Game struct {
-		MaxChannels int `env:"MAX_CHANNELS" envDefault:"500"`
+		MaxChannels       int `env:"MAX_CHANNELS" envDefault:"500"`
+		WSMaxMessageBytes int `env:"WS_MAX_MESSAGE" envDefault:"4096"`
+		// Шаблоны host[:port] без схемы, как websocket.AcceptOptions.OriginPatterns.
+		WSAllowedOrigins []string `env:"WS_ALLOWED_ORIGINS" envDefault:"localhost:5173"`
 	}
 
 	// Log - настройки логирования.
@@ -96,6 +100,17 @@ func (c Config) validate() error {
 
 	check(c.Server.MaxBodyBytes > 0, "SERVER_MAX_BODY_BYTES must be positive, got %d", c.Server.MaxBodyBytes)
 	check(c.Game.MaxChannels > 0, "GAME_MAX_CHANNELS must be positive, got %d", c.Game.MaxChannels)
+	check(c.Game.WSMaxMessageBytes > 0,
+		"GAME_WS_MAX_MESSAGE must be positive, got %d", c.Game.WSMaxMessageBytes)
+	for _, p := range c.Game.WSAllowedOrigins {
+		// "a, b" дает шаблон " b" - он не совпадет ни с одним Origin.
+		check(p != "" && strings.TrimSpace(p) == p,
+			"GAME_WS_ALLOWED_ORIGINS: pattern %q is empty or has spaces", p)
+		check(!strings.Contains(p, "://"),
+			"GAME_WS_ALLOWED_ORIGINS: pattern %q must be host[:port] without scheme", p)
+		_, err := path.Match(p, "")
+		check(err == nil, "GAME_WS_ALLOWED_ORIGINS: bad pattern %q", p)
+	}
 
 	if len(problems) == 0 {
 		return nil

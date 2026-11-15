@@ -1,6 +1,11 @@
 package middleware
 
-import "net/http"
+import (
+	"bufio"
+	"errors"
+	"net"
+	"net/http"
+)
 
 // responseRecorder запоминает статус ответа, размер тела и то, что ответ уже начат:
 // http.ResponseWriter этого не отдаёт.
@@ -42,4 +47,24 @@ func (r *responseRecorder) Write(p []byte) (int, error) {
 // Unwrap нужен http.ResponseController, чтобы добраться до исходного writer (Flush, дедлайны).
 func (r *responseRecorder) Unwrap() http.ResponseWriter {
 	return r.ResponseWriter
+}
+
+// errHijackUnsupported - исходный writer не умеет Hijack, WebSocket невозможен.
+var errHijackUnsupported = errors.New("underlying ResponseWriter does not support hijacking")
+
+// Hijack нужен websocket.Accept: без него апгрейд за middleware не работает.
+func (r *responseRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := r.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errHijackUnsupported
+	}
+	return h.Hijack() //nolint:wrapcheck // обертка writer, а не граница слоя.
+}
+
+// Flush пробрасывает Flush исходному writer: без него стриминг за
+// middleware молча буферизуется.
+func (r *responseRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
