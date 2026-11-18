@@ -56,8 +56,8 @@ func NewChannels(registry *channel.Registry) *Channels {
 }
 
 // Create открывает канал и отдает хосту код и токен.
-func (c *Channels) Create(_ context.Context, in *CreateChannelInput) (*CreateChannelOutput, error) {
-	ch, tok, err := c.registry.Create(in.Body.Mode)
+func (c *Channels) Create(ctx context.Context, in *CreateChannelInput) (*CreateChannelOutput, error) {
+	ch, tok, err := c.registry.Create(ctx, in.Body.Mode)
 	if err != nil {
 		return nil, toHTTPError(err)
 	}
@@ -68,12 +68,12 @@ func (c *Channels) Create(_ context.Context, in *CreateChannelInput) (*CreateCha
 }
 
 // Join сажает гостя на свободный пост канала с кодом in.Code.
-func (c *Channels) Join(_ context.Context, in *JoinChannelInput) (*JoinChannelOutput, error) {
+func (c *Channels) Join(ctx context.Context, in *JoinChannelInput) (*JoinChannelOutput, error) {
 	ch, err := c.registry.ByCode(in.Code)
 	if err != nil {
 		return nil, toHTTPError(err)
 	}
-	tok, err := ch.Join()
+	tok, err := ch.Join(ctx)
 	if err != nil {
 		return nil, toHTTPError(err)
 	}
@@ -92,7 +92,8 @@ func newChannelBody(ch *channel.Channel, tok channel.Token) channelBody {
 // Остальное уходит как 500: подробности попадут в лог, не клиенту.
 func toHTTPError(err error) error {
 	switch {
-	case errors.Is(err, channel.ErrNotFound):
+	case errors.Is(err, channel.ErrNotFound), errors.Is(err, channel.ErrChannelClosed):
+		// ErrChannelClosed: канал закрылся между ByCode и Join - для гостя его уже нет
 		return huma.Error404NotFound("channel not found")
 	case errors.Is(err, channel.ErrFull):
 		return huma.Error409Conflict("channel is full")

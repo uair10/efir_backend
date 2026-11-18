@@ -36,7 +36,10 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	registry := channel.NewRegistry(cfg.Game.MaxChannels)
+	registry := channel.NewRegistry(cfg.Game.MaxChannels,
+		channel.WithLogger(logger),
+		channel.WithTick(cfg.Game.Tick),
+	)
 	server := httpapi.New(logger, cfg.Server, registry, httpapi.WithGame(cfg.Game))
 
 	errCh := make(chan error, 1)

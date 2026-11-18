@@ -22,15 +22,27 @@ func (p Post) IsValid() bool {
 }
 
 // Player - игрок на посту. Наружу канал отдает только копию (Channel.Player),
-// поэтому открытые поля не дают менять состояние канала в обход его замка.
+// поэтому открытые поля не дают менять состояние канала в обход его горутины.
 // Пост игрока не хранится: его задает слот канала, в котором он сидит.
 type Player struct {
-	Callsign  Callsign
-	Ready     bool
-	Bot       bool
-	Connected bool
+	Callsign Callsign
+	Ready    bool
+	Bot      bool
 
 	token Token // у бота пустой: пустой токен не совпадает ни с каким
+}
+
+// posts - все посты канала по порядку.
+//
+//nolint:gochecknoglobals // справочник только для чтения
+var posts = [...]Post{PostWest, PostEast}
+
+// mateOf - пост напарника.
+func mateOf(p Post) Post {
+	if p == PostWest {
+		return PostEast
+	}
+	return PostWest
 }
 
 // newPlayer - человек с токеном, еще не готов (хозяин или гость).

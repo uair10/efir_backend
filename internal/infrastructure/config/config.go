@@ -39,8 +39,9 @@ type (
 
 	// Game - настройки игры.
 	Game struct {
-		MaxChannels       int `env:"MAX_CHANNELS" envDefault:"500"`
-		WSMaxMessageBytes int `env:"WS_MAX_MESSAGE" envDefault:"4096"`
+		Tick              time.Duration `env:"TICK" envDefault:"50ms"`
+		MaxChannels       int           `env:"MAX_CHANNELS" envDefault:"500"`
+		WSMaxMessageBytes int           `env:"WS_MAX_MESSAGE" envDefault:"4096"`
 		// Шаблоны host[:port] без схемы, как websocket.AcceptOptions.OriginPatterns.
 		WSAllowedOrigins []string `env:"WS_ALLOWED_ORIGINS" envDefault:"localhost:5173"`
 	}
@@ -99,6 +100,7 @@ func (c Config) validate() error {
 	}
 
 	check(c.Server.MaxBodyBytes > 0, "SERVER_MAX_BODY_BYTES must be positive, got %d", c.Server.MaxBodyBytes)
+	check(c.Game.Tick > 0, "GAME_TICK must be positive, got %s", c.Game.Tick)
 	check(c.Game.MaxChannels > 0, "GAME_MAX_CHANNELS must be positive, got %d", c.Game.MaxChannels)
 	check(c.Game.WSMaxMessageBytes > 0,
 		"GAME_WS_MAX_MESSAGE must be positive, got %d", c.Game.WSMaxMessageBytes)

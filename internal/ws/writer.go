@@ -8,6 +8,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/uair10/efir_backend/internal/channel"
+	"github.com/uair10/efir_backend/internal/infrastructure/logging"
 )
 
 // writeLoop разбирает outbox и пишет кадры. После Close - close-рукопожатие.
@@ -51,7 +52,7 @@ func (s *Socket) writeAll(ctx context.Context, queue []channel.Message) error {
 		if err != nil {
 			// Payload не сериализуется - это баг вызывающего, не клиента.
 			// Логируем и пропускаем, чтобы одно сообщение не рвало соединение.
-			s.opts.Logger.Error("ws: marshal payload", "err", err)
+			s.opts.Logger.Error("ws: marshal payload", logging.Err(err))
 			continue
 		}
 		// Write ждёт, пока TCP-буфер разгрузится. Блокируется только

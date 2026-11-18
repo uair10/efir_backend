@@ -1,17 +1,22 @@
 package channel
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
+
+	"github.com/uair10/efir_backend/internal/infrastructure/logging"
 )
 
 const (
 	maxCodeAttempts = 10 // попыток подобрать свободный код
 	channelIDBytes  = 16
+	defaultTick     = 50 * time.Millisecond // GAME_TICK по умолчанию
 )
 
 var errEmptyCode = errors.New("code generator returned empty code")
@@ -28,7 +33,8 @@ var errEmptyCode = errors.New("code generator returned empty code")
 type Registry struct {
 	maxChannels int
 	codeGen     func() (Code, error)
-	logger      *slog.Logger
+	tick        time.Duration
+	logger      *slog.Logger // базовый логгер каналов, без request_id
 
 	mu     sync.Mutex
 	byID   map[string]*Channel // все каналы, включая одиночные
@@ -45,7 +51,12 @@ func WithCodeGenerator(gen func() (Code, error)) Option {
 	return func(r *Registry) { r.codeGen = gen }
 }
 
-// WithLogger задает логгер, который получат каналы реестра.
+// WithTick задает шаг времени каналов (GAME_TICK).
+func WithTick(d time.Duration) Option {
+	return func(r *Registry) { r.tick = d }
+}
+
+// WithLogger задает базовый логгер каналов. Без него каналы молчат.
 func WithLogger(l *slog.Logger) Option {
 	return func(r *Registry) { r.logger = l }
 }
@@ -55,7 +66,8 @@ func NewRegistry(maxChannels int, opts ...Option) *Registry {
 	r := &Registry{
 		maxChannels: maxChannels,
 		codeGen:     newCode,
-		logger:      slog.Default(),
+		tick:        defaultTick,
+		logger:      logging.Discard(),
 		byID:        make(map[string]*Channel),
 		byCode:      make(map[Code]*Channel),
 	}
@@ -66,7 +78,8 @@ func NewRegistry(maxChannels int, opts ...Option) *Registry {
 }
 
 // Create открывает канал в режиме mode. Возвращает канал и токен хозяина,
-// который уже сидит на west.
+// который уже сидит на west. Событие создания пишется логгером из ctx
+// (с request_id создателя) и channel_id: по нему находится вся история канала.
 //
 // Проверка лимита, выбор кода и вставка - под одним r.mu: иначе два вызова
 // получат один код или вместе превысят лимит.
@@ -77,7 +90,7 @@ func NewRegistry(maxChannels int, opts ...Option) *Registry {
 //     при этом не вызывается.
 //   - ErrCodeCollision - maxCodeAttempts кодов подряд заняты.
 //   - ошибка генератора кода или токена, обернутая.
-func (r *Registry) Create(mode GameMode) (*Channel, Token, error) {
+func (r *Registry) Create(ctx context.Context, mode GameMode) (*Channel, Token, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
@@ -94,13 +107,17 @@ func (r *Registry) Create(mode GameMode) (*Channel, Token, error) {
 	if err != nil {
 		return nil, Token{}, fmt.Errorf("registry: create channel: %w", err)
 	}
-	ch, tok, err := newChannel(id, code, mode, r.logger)
+	ch, tok, err := startChannel(channelConfig{id: id, code: code, mode: mode, tick: r.tick, log: r.logger})
 	if err != nil {
 		return nil, Token{}, fmt.Errorf("registry: create channel: %w", err)
 	}
 	r.byID[id] = ch
 	r.byCode[code] = ch
-	ch.Start() // после вставки: ByID уже находит канал
+	logging.FromCtx(ctx).Info("channel created",
+		logging.ChannelID(id),
+		logging.ChannelCode(code.String()),
+		slog.String("mode", string(mode)),
+	)
 	return ch, tok, nil
 }
 
@@ -126,7 +143,7 @@ func (r *Registry) Close() {
 	}
 }
 
-// ByCode ищет канал для входа гостя; дальше гость входит через ch.Join().
+// ByCode ищет канал для входа гостя; дальше гость входит через ch.Join(ctx).
 //
 // Одиночный канал отдает ErrNotFound, как будто его нет: незачем
 // подтверждать, что такой код существует.

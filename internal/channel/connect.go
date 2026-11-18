@@ -1,9 +1,10 @@
 package channel
 
 import (
-	"encoding/json"
 	"errors"
 	"log/slog"
+
+	"github.com/uair10/efir_backend/internal/infrastructure/logging"
 )
 
 // Message - исходящее сообщение канала для сокета.
@@ -57,6 +58,40 @@ const (
 	CloseReasonInternal      CloseReason = "internal"       // баг на сервере при разборе сообщения
 )
 
+// ErrorMessage - прикладная ошибка клиенту. Не путать с кодом закрытия
+// WebSocket: тот - транспорт (runErr), этот - JSON до/без закрытия.
+//
+// Коды - только из контракта (раздел 3.1): клиент не знает других.
+type ErrorMessage struct {
+	Type    string `json:"type"`              // "error"
+	Code    string `json:"code"`              // "callsign_taken" | "callsign_locked" | "partner_missing"
+	Message string `json:"message,omitempty"` // текст для логов клиента
+}
+
+// newErrorMessage собирает ошибку ErrorMessage.
+func newErrorMessage(code string, err error) ErrorMessage {
+	msg := ErrorMessage{Type: "error", Code: code}
+	if err != nil {
+		msg.Message = err.Error()
+	}
+	return msg
+}
+
+// errorCode - код контракта для отказа команды. ok == false - отказ клиенту
+// не сообщается (мусор, неизвестный позывной, чужой пост): только лог.
+func errorCode(err error) (string, bool) {
+	switch {
+	case errors.Is(err, ErrCallsignTaken):
+		return "callsign_taken", true
+	case errors.Is(err, ErrCallsignLocked):
+		return "callsign_locked", true
+	case errors.Is(err, ErrPartnerMissing):
+		return "partner_missing", true
+	default:
+		return "", false
+	}
+}
+
 // Socket - что канал ждёт от сокета. Реализует пакет ws.
 // Оба метода не блокируют: канал не должен ждать медленного клиента.
 type Socket interface {
@@ -67,41 +102,39 @@ type Socket interface {
 // Connection - одно подключение игрока к каналу.
 //
 // Это ручка, а не игрок. Если игрок переподключился, старая ручка устарела:
-// её Disconnect не должен сбить новое подключение.
+// её команды и Disconnect не трогают новое подключение.
+//
+// Поля неизменяемы после создания: ручкой пользуются и горутина чтения
+// сокета, и горутина канала.
 type Connection struct {
 	ch   *Channel
 	post Post
 	sock Socket
+	log  *slog.Logger // логгер сессии: request_id апгрейда, channel_id, post
 }
 
 // Post - пост, к которому привязано подключение.
 func (conn *Connection) Post() Post { return conn.post }
 
-// Receive принимает сырое входящее сообщение сокета и разбирает его.
-// Мусор (не JSON) игнорируется: клиент не должен ронять канал.
+// Receive принимает сырое входящее сообщение сокета. Разбор - здесь, в
+// горутине чтения; выполнение - в горутине канала. Ответа не ждёт: отказ
+// канал сам отправит в сокет.
+//
+// Мусор (не JSON, неизвестный type) игнорируется с записью в debug,
+// соединение живёт (SPEC, раздел 5).
 func (conn *Connection) Receive(data []byte) {
-	if !json.Valid(data) {
-		conn.ch.logger.Debug("garbage ignored", slog.String("post", string(conn.post)))
+	cmd, err := parseCommand(data)
+	if err != nil {
+		conn.log.Debug("message ignored", slog.Int("size", len(data)), logging.Err(err))
 		return
 	}
-	// EFR-3: команд ещё нет. Позже: разобрать "type" и передать
-	// действие в канал через conn.ch.do(...).
+	conn.log.Debug("message received", slog.String("type", cmd.kind()), slog.Int("size", len(data)))
+	conn.ch.tell(commandEvent{conn: conn, cmd: cmd}) // канал закрыт - отвечать некому
 }
 
-// Disconnect вызывается, когда сокет закрыт или оборвался. Идемпотентен:
-// повторный вызов (или вызов от устаревшей ручки) ничего не делает.
+// Disconnect сообщает каналу, что сокет закрыт или оборвался. Не ждёт.
+// Идемпотентен: повторный вызов (или вызов от устаревшей ручки) ничего
+// не делает.
 func (conn *Connection) Disconnect() {
-	err := conn.ch.do(func() error {
-		// Устаревшая ручка: игрок уже переподключился, на посту другая Connection.
-		if conn.ch.conns[conn.post] != conn {
-			return nil
-		}
-		delete(conn.ch.conns, conn.post)
-		conn.ch.broadcastLobby()
-		return nil
-	})
-	// ErrChannelClosed - канал уже остановлен, отключать некого.
-	if err != nil && !errors.Is(err, ErrChannelClosed) {
-		conn.ch.logger.Error("disconnect", slog.Any("err", err))
-	}
+	conn.ch.tell(disconnectEvent{conn: conn})
 }

@@ -26,6 +26,7 @@ func TestLoad(t *testing.T) {
 		},
 		Log: Log{Level: slog.LevelInfo},
 		Game: Game{
+			Tick:              50 * time.Millisecond,
 			MaxChannels:       500,
 			WSMaxMessageBytes: 4096,
 			WSAllowedOrigins:  []string{"localhost:5173"},

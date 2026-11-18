@@ -11,6 +11,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/uair10/efir_backend/internal/channel"
+	"github.com/uair10/efir_backend/internal/infrastructure/logging"
 )
 
 // Socket оборачивает websocket.Conn и реализует channel.Socket.
@@ -82,7 +83,7 @@ func New(conn *websocket.Conn, opts Options) *Socket {
 
 // Send кладёт сообщение в outbox, не блокируя. Если outbox полон:
 //   - выбрасывается самый старый Droppable, если такой есть;
-//   - иначе соединение закрывается кодом 1008 «slow consumer».
+//   - иначе соединение закрывается кодом 1008 "slow consumer".
 //
 // После Close (или после выхода Run) Send - no-op.
 func (s *Socket) Send(msg channel.Message) {
@@ -107,6 +108,7 @@ func (s *Socket) Send(msg channel.Message) {
 			// тогда кадр 1008 не уйдет, и транспорт рвем по таймеру.
 			s.queue = nil
 			s.closing = &closeSpec{websocket.StatusPolicyViolation, "slow consumer"}
+			s.opts.Logger.Warn("ws: slow consumer, closing", logging.CloseCode(int(websocket.StatusPolicyViolation)))
 			s.wakeWriter()
 			time.AfterFunc(slowConsumerGrace, func() { _ = s.conn.CloseNow() })
 			return

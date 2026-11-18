@@ -15,10 +15,11 @@ import (
 func newTestChannel(t *testing.T, mode GameMode) (*Channel, Token) {
 	t.Helper()
 
-	ch, tok, err := newChannel("c_test", mustCode(t, "482117"), mode, slog.New(slog.DiscardHandler))
+	ch, tok, err := startChannel(channelConfig{
+		id: "c_test", code: mustCode(t, "482117"), mode: mode,
+		tick: defaultTick, log: slog.New(slog.DiscardHandler),
+	})
 	require.NoError(t, err)
-	// Join рассылает лобби через горутину канала: без Start он зависнет.
-	ch.Start()
 	t.Cleanup(func() {
 		ch.Stop(CloseReasonChannelClosed)
 		ch.Wait()
@@ -38,7 +39,7 @@ func TestNewChannel_Fields(t *testing.T) {
 	assert.Equal(t, GameModeCoop, ch.Mode())
 }
 
-// BR-1.3: открывший канал занимает west с позывным «Первый».
+// BR-1.3: открывший канал занимает west с позывным "Первый".
 func TestNewChannel_Coop(t *testing.T) {
 	t.Parallel()
 
@@ -58,7 +59,7 @@ func TestNewChannel_Coop(t *testing.T) {
 	assert.Equal(t, PostWest, post)
 }
 
-// BR-1.3: в одиночной смене east сразу занимает бот «Второй», готовый.
+// BR-1.3: в одиночной смене east сразу занимает бот "Второй", готовый.
 func TestNewChannel_Solo(t *testing.T) {
 	t.Parallel()
 
@@ -81,14 +82,14 @@ func TestNewChannel_Solo(t *testing.T) {
 }
 
 // BR-1.4: гость занимает east и получает первый свободный позывной.
-// Случай «у хозяина Второй -> гость Первый» покрыт в TestFirstFreeCallsign:
+// Случай "у хозяина Второй -> гость Первый" покрыт в TestFirstFreeCallsign:
 // сменить позывной хозяина можно только командой лобби (EFR-4).
 func TestChannel_Join(t *testing.T) {
 	t.Parallel()
 
 	ch, hostTok := newTestChannel(t, GameModeCoop)
 
-	guestTok, err := ch.Join()
+	guestTok, err := ch.Join(t.Context())
 	require.NoError(t, err)
 	require.False(t, guestTok.IsEmpty())
 	assert.False(t, guestTok.Equal(hostTok), "у каждого игрока свой токен")
@@ -114,10 +115,10 @@ func TestChannel_Join_Full(t *testing.T) {
 
 	ch, _ := newTestChannel(t, GameModeCoop)
 
-	guestTok, err := ch.Join()
+	guestTok, err := ch.Join(t.Context())
 	require.NoError(t, err)
 
-	tok, err := ch.Join()
+	tok, err := ch.Join(t.Context())
 	require.ErrorIs(t, err, ErrFull)
 	assert.True(t, tok.IsEmpty())
 
@@ -133,7 +134,7 @@ func TestChannel_Join_Solo(t *testing.T) {
 
 	ch, _ := newTestChannel(t, GameModeSolo)
 
-	tok, err := ch.Join()
+	tok, err := ch.Join(t.Context())
 	require.ErrorIs(t, err, ErrFull)
 	assert.True(t, tok.IsEmpty())
 
@@ -159,7 +160,7 @@ func TestChannel_Join_Concurrent(t *testing.T) {
 	)
 	for range n {
 		wg.Go(func() {
-			tok, err := ch.Join()
+			tok, err := ch.Join(t.Context())
 			_, _ = ch.Player(PostEast)
 			_, _ = ch.PostOf(hostTok)
 
@@ -213,5 +214,5 @@ func TestChannel_PostOf_EmptyTokenSolo(t *testing.T) {
 	ch, _ := newTestChannel(t, GameModeSolo)
 
 	_, ok := ch.PostOf(Token{})
-	assert.False(t, ok, "пустой токен не равен «токену» бота")
+	assert.False(t, ok, "пустой токен не равен токену бота")
 }

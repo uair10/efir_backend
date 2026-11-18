@@ -497,6 +497,31 @@ func TestWS_TokenNotLogged(t *testing.T) {
 	assert.NotContains(t, logs, "token=", "query с токеном в логе")
 }
 
+// BR-24.3: записи сессии несут channel_id и post ровно один раз. slog.With
+// не схлопывает повторы: если и обработчик, и канал добавят ключ, в JSON
+// он окажется дважды.
+func TestWS_LogKeysNotDuplicated(t *testing.T) {
+	t.Parallel()
+
+	e := newWSEnv(t)
+	host := e.create(t, channel.GameModeCoop)
+	c := e.dial(t, host)
+	readLobby(t, c)
+	writeText(t, c, `{"type":"unknown"}`) // debug "message ignored" от Connection
+	require.NoError(t, c.Close(websocket.StatusNormalClosure, ""))
+
+	assert.Eventually(t, func() bool {
+		logs := e.logs.String()
+		return strings.Contains(logs, "message ignored") && strings.Contains(logs, "socket disconnected")
+	}, wsWait, 10*time.Millisecond)
+
+	for line := range strings.Lines(e.logs.String()) {
+		for _, key := range []string{`"request_id":`, `"channel_id":`, `"post":`} {
+			assert.LessOrEqual(t, strings.Count(line, key), 1, "ключ %s задвоен: %s", key, line)
+		}
+	}
+}
+
 // BR-5.6, NFR-5: при остановке сервера (Registry.Close в main) клиенты
 // получают 1001 по настоящему сокету.
 func TestWS_RegistryCloseSendsGoingAway(t *testing.T) {

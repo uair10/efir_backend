@@ -116,16 +116,16 @@ func newTestRegistry(t *testing.T) *Registry {
 //nolint:revive // confusing-results: именованные результаты запрещает nonamedreturns
 func coopWithGuest(t *testing.T, r *Registry) (*Channel, Token, Token) {
 	t.Helper()
-	ch, host, err := r.Create(GameModeCoop)
+	ch, host, err := r.Create(t.Context(), GameModeCoop)
 	require.NoError(t, err)
-	guest, err := ch.Join()
+	guest, err := ch.Join(t.Context())
 	require.NoError(t, err)
 	return ch, host, guest
 }
 
 func mustConnect(t *testing.T, ch *Channel, tok Token, sock Socket) *Connection {
 	t.Helper()
-	conn, err := ch.Connect(tok, sock)
+	conn, err := ch.Connect(t.Context(), tok, sock)
 	require.NoError(t, err)
 	return conn
 }
@@ -135,7 +135,7 @@ func TestConnect_HostGetsLobby(t *testing.T) {
 	t.Parallel()
 
 	r := newTestRegistry(t)
-	ch, host, err := r.Create(GameModeCoop)
+	ch, host, err := r.Create(t.Context(), GameModeCoop)
 	require.NoError(t, err)
 
 	hostSock := newFakeSocket()
@@ -160,7 +160,7 @@ func TestConnect_SoloLobbyHasBot(t *testing.T) {
 	t.Parallel()
 
 	r := newTestRegistry(t)
-	ch, host, err := r.Create(GameModeSolo)
+	ch, host, err := r.Create(t.Context(), GameModeSolo)
 	require.NoError(t, err)
 
 	hostSock := newFakeSocket()
@@ -227,9 +227,9 @@ func TestConnect_Unauthorized(t *testing.T) {
 	t.Parallel()
 
 	r := newTestRegistry(t)
-	ch, _, err := r.Create(GameModeSolo)
+	ch, _, err := r.Create(t.Context(), GameModeSolo)
 	require.NoError(t, err)
-	_, foreign, err := r.Create(GameModeCoop)
+	_, foreign, err := r.Create(t.Context(), GameModeCoop)
 	require.NoError(t, err)
 
 	for name, tok := range map[string]Token{
@@ -240,7 +240,7 @@ func TestConnect_Unauthorized(t *testing.T) {
 			t.Parallel()
 
 			sock := newFakeSocket()
-			conn, err := ch.Connect(tok, sock)
+			conn, err := ch.Connect(t.Context(), tok, sock)
 			require.ErrorIs(t, err, ErrUnauthorized)
 			assert.Nil(t, conn)
 			assert.Empty(t, sock.msgs, "отказанному клиенту ничего не шлем")
@@ -349,6 +349,48 @@ func TestReceive_GarbageIgnored(t *testing.T) {
 	}
 }
 
+// nextError ждет следующее сообщение клиенту и разбирает его как ошибку.
+func nextError(t *testing.T, f *fakeSocket) ErrorMessage {
+	t.Helper()
+	select {
+	case m := <-f.msgs:
+		em, ok := m.Payload.(ErrorMessage)
+		require.True(t, ok, "payload %T, want ErrorMessage", m.Payload)
+		return em
+	case <-time.After(waitTimeout):
+		require.FailNow(t, "нет сообщения error")
+		return ErrorMessage{}
+	}
+}
+
+// Раздел 3.1 контракта: команды плоские, поля рядом с type. BR-4.2: неизвестный
+// позывной игнорируется, позывной напарника - callsign_taken, после "Готов" -
+// callsign_locked.
+func TestReceive_SetCallsign(t *testing.T) {
+	t.Parallel()
+
+	r := newTestRegistry(t)
+	ch, host, guest := coopWithGuest(t, r)
+	hostSock := newFakeSocket()
+	hostConn := mustConnect(t, ch, host, hostSock)
+	mustConnect(t, ch, guest, newFakeSocket())
+	waitLobby(t, hostSock, func(l LobbyMessage) bool { return l.Lobby.Players[PostEast].Connected })
+
+	hostConn.Receive([]byte(`{"type":"set_callsign","callsign":"Сокол"}`))
+	lm := nextLobby(t, hostSock).Lobby
+	assert.Equal(t, Callsign("Сокол"), lm.Players[PostWest].Callsign)
+
+	hostConn.Receive([]byte(`{"type":"set_callsign","callsign":"Нет такого"}`))
+	hostConn.Receive([]byte(`{"type":"set_callsign","callsign":"Второй"}`))
+	assert.Equal(t, ErrorMessage{Type: "error", Code: "callsign_taken", Message: ErrCallsignTaken.Error()},
+		nextError(t, hostSock), "неизвестный позывной молча пропущен, следом - отказ")
+
+	hostConn.Receive([]byte(`{"type":"set_ready","ready":true}`))
+	assert.True(t, nextLobby(t, hostSock).Lobby.Players[PostWest].Ready)
+	hostConn.Receive([]byte(`{"type":"set_callsign","callsign":"Заря"}`))
+	assert.Equal(t, "callsign_locked", nextError(t, hostSock).Code)
+}
+
 // BR-5.6, NFR-5: Registry.Close закрывает клиентов с CloseReasonShutdown (-> 1001).
 func TestRegistryClose_ShutsClients(t *testing.T) {
 	t.Parallel()
@@ -379,7 +421,7 @@ func TestChannelStopped_NoDeadlock(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, err := ch.Connect(guest, newFakeSocket())
+		_, err := ch.Connect(t.Context(), guest, newFakeSocket())
 		assert.Error(t, err, "Connect к остановленному каналу")
 		hostConn.Receive([]byte(`{"type":"set_ready","ready":true}`))
 		hostConn.Disconnect()
@@ -407,7 +449,7 @@ func TestConnect_Concurrent(t *testing.T) {
 			tok = guest
 		}
 		wg.Go(func() {
-			conn, err := ch.Connect(tok, newFakeSocket())
+			conn, err := ch.Connect(t.Context(), tok, newFakeSocket())
 			if !assert.NoError(t, err) { //nolint:testifylint // require в горутине нельзя: FailNow только из горутины теста
 				return
 			}
@@ -444,7 +486,7 @@ func TestRegistryClose_NoGoroutineLeak(t *testing.T) {
 		mustConnect(t, ch, host, newFakeSocket())
 		mustConnect(t, ch, guest, newFakeSocket())
 	}
-	_, _, err := r.Create(GameModeSolo)
+	_, _, err := r.Create(t.Context(), GameModeSolo)
 	require.NoError(t, err)
 	require.Greater(t, runtime.NumGoroutine(), base, "у каналов должны быть свои горутины")
 
@@ -503,31 +545,31 @@ func TestConnect_AfterRemove(t *testing.T) {
 	ch.Wait()
 
 	sock := newFakeSocket()
-	_, err := ch.Connect(host, sock)
+	_, err := ch.Connect(t.Context(), host, sock)
 	require.ErrorIs(t, err, ErrChannelClosed)
 	assert.Equal(t, CloseReasonChannelClosed, waitClosed(t, sock))
 }
 
-// Connect читает посты под c.mu: одновременный Join не дает гонки (-race),
+// Connect и Join идут через горутину канала: одновременно они не дают гонки (-race),
 // и гость, севший во время подключения хозяина, виден в лобби.
 func TestConnect_ConcurrentWithJoin(t *testing.T) {
 	t.Parallel()
 
 	r := newTestRegistry(t)
 	for range 20 {
-		ch, host, err := r.Create(GameModeCoop)
+		ch, host, err := r.Create(t.Context(), GameModeCoop)
 		require.NoError(t, err)
 
 		hostSock := newFakeSocket()
 		var wg sync.WaitGroup
 		wg.Go(func() {
-			_, err := ch.Connect(host, hostSock)
+			_, err := ch.Connect(t.Context(), host, hostSock)
 			assert.NoError(t, err)
 		})
 		var guest Token
 		wg.Go(func() {
 			var err error
-			guest, err = ch.Join()
+			guest, err = ch.Join(t.Context())
 			assert.NoError(t, err)
 		})
 		wg.Wait()
@@ -568,7 +610,7 @@ func TestRegistry_CreateAfterClose(t *testing.T) {
 	r := NewRegistry(testMaxChannels)
 	r.Close()
 
-	_, _, err := r.Create(GameModeCoop)
+	_, _, err := r.Create(t.Context(), GameModeCoop)
 	require.ErrorIs(t, err, ErrRegistryClosed)
 	assert.Equal(t, 0, r.Len())
 }
@@ -579,14 +621,14 @@ func TestJoin_BroadcastsLobby(t *testing.T) {
 	t.Parallel()
 
 	r := newTestRegistry(t)
-	ch, host, err := r.Create(GameModeCoop)
+	ch, host, err := r.Create(t.Context(), GameModeCoop)
 	require.NoError(t, err)
 
 	hostSock := newFakeSocket()
 	mustConnect(t, ch, host, hostSock)
 	require.Nil(t, nextLobby(t, hostSock).Lobby.Players[PostEast], "гостя ещё нет")
 
-	_, err = ch.Join()
+	_, err = ch.Join(t.Context())
 	require.NoError(t, err)
 
 	lm := nextLobby(t, hostSock).Lobby
@@ -596,17 +638,17 @@ func TestJoin_BroadcastsLobby(t *testing.T) {
 	assert.Equal(t, PostWest, lm.You)
 }
 
-// Join в остановленный канал: гость сел (места раздаёт c.mu), рассылка
-// молча пропущена - Join не зависает и не возвращает ошибку.
+// Join в остановленный канал: места раздаёт горутина канала, её уже нет - Join не
+// зависает и возвращает ErrChannelClosed. Токен мёртвого канала гостю не нужен.
 func TestJoin_StoppedChannel(t *testing.T) {
 	t.Parallel()
 
 	r := newTestRegistry(t)
-	ch, _, err := r.Create(GameModeCoop)
+	ch, _, err := r.Create(t.Context(), GameModeCoop)
 	require.NoError(t, err)
 	r.Remove(ch.ID())
 	ch.Wait()
 
-	_, err = ch.Join()
-	assert.NoError(t, err)
+	_, err = ch.Join(t.Context())
+	assert.ErrorIs(t, err, ErrChannelClosed)
 }
