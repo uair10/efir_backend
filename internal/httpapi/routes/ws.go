@@ -11,6 +11,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -90,11 +91,20 @@ func (h *ChannelsWS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Токен и канал. На всё - один 401: не подсказываем, что именно не так.
-	tok, ch, ok := h.authorize(r)
+	tok, ch, post, ok := h.authorize(r)
 	if !ok {
 		middleware.WriteError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+
+	// Логгер сессии: request_id апгрейда, channel_id, post. Им пишут этот
+	// обработчик и сокет. Канал получает исходный ctx (только request_id) и
+	// добавляет channel_id и post сам: slog.With не схлопывает повторы, и
+	// ключи задвоились бы. grep по любому ключу собирает историю сессии
+	// (BR-24.3).
+	reqCtx := ctx
+	logger = logger.With(logging.ChannelID(ch.ID()), logging.Post(post))
+	ctx = logging.WithLogger(ctx, logger)
 
 	// Апгрейд. Accept сверяет Origin ещё раз сам и без шаблонов
 	// отвечает 403 на любой чужой, поэтому даём ему тот же список.
@@ -103,17 +113,16 @@ func (h *ChannelsWS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		CompressionMode: websocket.CompressionDisabled,
 	})
 	if err != nil {
-		logger.ErrorContext(ctx, "ws upgrade failed", slog.Any("err", err))
+		logger.WarnContext(ctx, "ws upgrade failed", logging.Err(err))
 		return // Accept уже ответил ошибкой
 	}
 
-	// Привязка к каналу. sock реализует channel.Socket. Логи сокета
-	// (pong timeout, ошибки записи) - с request_id и channel_id этого запроса.
-	logger = logger.With(slog.String("channel_id", ch.ID()))
+	// Привязка к каналу. sock реализует channel.Socket. Подключение
+	// ("socket connected" / "socket replaced") пишет канал.
 	socketOpts := h.socketOpts
 	socketOpts.Logger = logger
 	sock := ws.New(wsConn, socketOpts)
-	conn, err := ch.Connect(tok, sock)
+	conn, err := ch.Connect(reqCtx, tok, sock)
 	if err != nil {
 		closeRejected(ctx, logger, wsConn, err)
 		return
@@ -121,6 +130,7 @@ func (h *ChannelsWS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Run блокируется до закрытия соединения. Входящие - в Receive канала.
 	// Disconnect после Run: идемпотентен, снимет пост, если мы всё ещё там.
+	started := time.Now()
 	runErr := sock.Run(ctx, receiveSafely(ctx, logger, conn.Receive, sock))
 	conn.Disconnect()
 
@@ -128,27 +138,41 @@ func (h *ChannelsWS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if code == -1 {
 		code = websocket.StatusAbnormalClosure // close-кадра не было: обрыв
 	}
-	logger.InfoContext(ctx, "ws closed",
-		slog.String("post", string(conn.Post())),
-		slog.Int("code", int(code)),
+	logger.Log(ctx, closeLevel(code), "socket disconnected",
+		logging.CloseCode(int(code)),
+		slog.Duration("session", time.Since(started)),
 	)
 }
 
-// authorize находит канал и проверяет, что токен из него.
+// closeLevel - уровень записи о закрытии (BR-24.4): клиент нарушил протокол
+// или не успевает - warn, баг сервера - error, остальное - жизненный цикл.
+func closeLevel(code websocket.StatusCode) slog.Level {
+	switch code {
+	case websocket.StatusPolicyViolation, websocket.StatusMessageTooBig:
+		return slog.LevelWarn
+	case websocket.StatusInternalError:
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
+// authorize находит канал и пост владельца токена.
 // ok == false - любая из причин 401; какая именно, наружу не говорим.
-func (h *ChannelsWS) authorize(r *http.Request) (channel.Token, *channel.Channel, bool) {
+func (h *ChannelsWS) authorize(r *http.Request) (channel.Token, *channel.Channel, channel.Post, bool) {
 	tok, err := channel.ParseToken(r.URL.Query().Get("token"))
 	if err != nil {
-		return channel.Token{}, nil, false
+		return channel.Token{}, nil, "", false
 	}
 	ch, err := h.registry.ByID(r.PathValue("channelId"))
 	if err != nil {
-		return channel.Token{}, nil, false
+		return channel.Token{}, nil, "", false
 	}
-	if _, ok := ch.PostOf(tok); !ok {
-		return channel.Token{}, nil, false
+	post, ok := ch.PostOf(tok)
+	if !ok {
+		return channel.Token{}, nil, "", false
 	}
-	return tok, ch, true
+	return tok, ch, post, true
 }
 
 // closeRejected закрывает сокет, который канал не принял. Run ещё не
@@ -162,7 +186,7 @@ func closeRejected(ctx context.Context, logger *slog.Logger, wsConn *websocket.C
 		// Канал удалён между authorize и Connect.
 		_ = wsConn.Close(websocket.StatusNormalClosure, "channel closed")
 	default:
-		logger.ErrorContext(ctx, "ws connect failed", slog.Any("err", err))
+		logger.ErrorContext(ctx, "ws connect failed", logging.Err(err))
 		_ = wsConn.Close(websocket.StatusInternalError, "internal error")
 	}
 }

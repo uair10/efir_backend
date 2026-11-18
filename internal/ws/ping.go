@@ -42,7 +42,7 @@ func (s *Socket) pingFailed(ctx context.Context, err error) error {
 	if ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
 		// Клиент молчит. Рвём транспорт: reader получит ошибку и выйдет,
 		// за ним writer.
-		s.opts.Logger.Info("ws: pong timeout, dropping client")
+		s.opts.Logger.Warn("ws: pong timeout, dropping client")
 		_ = s.conn.CloseNow()
 	}
 	return fmt.Errorf("ws: ping: %w", err)

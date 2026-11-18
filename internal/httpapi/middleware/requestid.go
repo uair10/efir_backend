@@ -20,7 +20,7 @@ func RequestID(base *slog.Logger) func(http.Handler) http.Handler {
 			}
 
 			ctx := requestid.With(r.Context(), id)
-			ctx = logging.WithLogger(ctx, base.With(slog.String("request_id", id)))
+			ctx = logging.WithLogger(ctx, base.With(logging.RequestID(id)))
 
 			// Отдаём в заголовке ответа всегда, даже при ошибках.
 			w.Header().Set(requestid.Header, id)

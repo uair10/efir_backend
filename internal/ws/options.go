@@ -3,6 +3,8 @@ package ws
 import (
 	"log/slog"
 	"time"
+
+	"github.com/uair10/efir_backend/internal/infrastructure/logging"
 )
 
 // Options - настройки одного Socket. Значения по умолчанию - в DefaultOptions.
@@ -11,7 +13,7 @@ type Options struct {
 	PingInterval    time.Duration // как часто слать ping
 	PongTimeout     time.Duration // сколько ждать pong, прежде чем оборвать
 	OutboxSize      int           // сколько исходящих держать для медленного клиента
-	Logger          *slog.Logger
+	Logger          *slog.Logger  // логгер сессии: request_id, channel_id, post; nil - молчать
 }
 
 // Значения по умолчанию.
@@ -48,7 +50,7 @@ func (o Options) normalize() Options {
 		o.PongTimeout = defaultPongTimeout
 	}
 	if o.Logger == nil {
-		o.Logger = slog.Default()
+		o.Logger = logging.Discard()
 	}
 	return o
 }
