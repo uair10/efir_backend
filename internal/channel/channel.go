@@ -25,12 +25,13 @@ const postsPerChannel = 2
 // попадает. Методы Channel превращают вызов в событие (events.go) и, если
 // нужен ответ, ждут его.
 type Channel struct {
-	id      string
-	code    Code
-	mode    GameMode
-	created time.Time
-	tick    time.Duration
-	log     *slog.Logger // channel_id, channel_code
+	id       string
+	code     Code
+	mode     GameMode
+	created  time.Time
+	tick     time.Duration
+	log      *slog.Logger // channel_id, channel_code
+	registry *Registry
 
 	inbox chan event
 	stop  chan CloseReason // буфер 1: Stop не блокируется и идемпотентен
@@ -39,11 +40,12 @@ type Channel struct {
 
 // channelConfig - всё, что нужно для запуска канала. Выдаёт реестр.
 type channelConfig struct {
-	id   string
-	code Code
-	mode GameMode
-	tick time.Duration // шаг времени канала (GAME_TICK)
-	log  *slog.Logger  // базовый логгер; канал добавит channel_id и channel_code
+	id       string
+	code     Code
+	mode     GameMode
+	tick     time.Duration // шаг времени канала (GAME_TICK)
+	log      *slog.Logger  // базовый логгер; канал добавит channel_id и channel_code
+	registry *Registry
 }
 
 // startChannel собирает канал, сажает хоста и запускает горутину канала.
@@ -54,16 +56,21 @@ func startChannel(cfg channelConfig) (*Channel, Token, error) {
 	if err != nil {
 		return nil, Token{}, err
 	}
+	if cfg.registry != nil {
+		r.reconnectGrace = cfg.registry.reconnectGrace
+		r.lobbyIdleTTL = cfg.registry.lobbyIdleTTL
+	}
 	c := &Channel{
-		id:      cfg.id,
-		code:    cfg.code,
-		mode:    cfg.mode,
-		created: time.Now(),
-		tick:    cfg.tick,
-		log:     log,
-		inbox:   make(chan event),
-		stop:    make(chan CloseReason, 1),
-		done:    make(chan struct{}),
+		id:       cfg.id,
+		code:     cfg.code,
+		mode:     cfg.mode,
+		created:  time.Now(),
+		tick:     cfg.tick,
+		log:      log,
+		registry: cfg.registry,
+		inbox:    make(chan event),
+		stop:     make(chan CloseReason, 1),
+		done:     make(chan struct{}),
 	}
 	go c.run(r)
 	return c, tok, nil
@@ -148,49 +155,86 @@ func (c *Channel) requestLog(ctx context.Context) *slog.Logger {
 
 // run - горутина канала. Единственная, кто видит room.
 //
-// Тикер работает всё время жизни канала: в смене (EFR-8) он нужен каждый
-// такт, а в лобби пустой такт стоит одну проверку фазы.
+// Тикер двигает отсчёт лобби и проверяет сроки возврата и простоя.
 func (c *Channel) run(r *room) {
+	if c.registry != nil {
+		defer c.registry.running.Done()
+	}
 	defer close(c.done)
 	ticker := time.NewTicker(c.tick)
 	defer ticker.Stop()
+
+	reason := c.runLoop(r, ticker.C)
+	r.closeAll(reason)
+	c.log.Info("channel closed",
+		slog.String("reason", string(reason)),
+		slog.Duration("lifetime", time.Since(c.created)),
+	)
+}
+
+// runLoop обрабатывает события и такты до запроса на закрытие канала.
+func (c *Channel) runLoop(r *room, ticks <-chan time.Time) CloseReason {
 	for {
+		// Убирать опубликованный канал нужно до приёма новых запросов.
+		select {
+		case reason := <-c.stop:
+			return reason
+		default:
+		}
 		select {
 		case ev := <-c.inbox:
-			c.handle(r, ev)
-		case <-ticker.C:
-			c.tickRoom(r)
+			if r.idleExpired(time.Now()) {
+				reason := c.closeRoom()
+				ev.abort(ErrChannelClosed)
+				return reason
+			}
+			if c.handle(r, ev) {
+				return c.closeRoom()
+			}
+		case <-ticks:
+			if c.tickRoom(r) {
+				return c.closeRoom()
+			}
 		case reason := <-c.stop:
-			r.closeAll(reason)
-			c.log.Info("channel closed",
-				slog.String("reason", string(reason)),
-				slog.Duration("lifetime", time.Since(c.created)),
-			)
-			return
+			return reason
 		}
 	}
 }
 
+// closeRoom убирает канал из реестра, а затем берёт причину остановки.
+// Если Registry.Close уже начал остановку, сохраняется его причина.
+func (c *Channel) closeRoom() CloseReason {
+	if c.registry != nil {
+		c.registry.Remove(c.id)
+	} else {
+		c.Stop(CloseReasonChannelClosed)
+	}
+	return <-c.stop
+}
+
 // handle выполняет событие. Паника - баг сервера: пишем со стеком,
 // ждущему отвечаем ошибкой, канал живёт дальше.
-func (c *Channel) handle(r *room, ev event) {
+func (c *Channel) handle(r *room, ev event) bool {
 	defer func() {
 		if v := recover(); v != nil {
 			c.logPanic(fmt.Sprintf("%T", ev), v)
 			ev.abort(fmt.Errorf("%w: %v", errEventPanic, v))
 		}
 	}()
-	r.handle(ev)
+	return r.handle(ev)
 }
 
 // tickRoom - такт с той же защитой от паники, что и handle.
-func (c *Channel) tickRoom(r *room) {
+func (c *Channel) tickRoom(r *room) bool {
 	defer func() {
 		if v := recover(); v != nil {
 			c.logPanic("tick", v)
 		}
 	}()
+	now := time.Now()
+	r.expireDisconnected(now)
 	r.tick(c.tick)
+	return r.idleExpired(now)
 }
 
 func (c *Channel) logPanic(where string, v any) {

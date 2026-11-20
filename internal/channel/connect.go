@@ -13,10 +13,21 @@ type Message struct {
 	Droppable bool // снимок: при переполнении outbox его можно выбросить
 }
 
+// ServerMessageType определяет тип исходящего WebSocket-сообщения.
+type ServerMessageType string
+
+// Типы сообщений сервера.
+const (
+	ServerMessageLobby  ServerMessageType = "lobby"
+	ServerMessageError  ServerMessageType = "error"
+	ServerMessageGame   ServerMessageType = "game"
+	ServerMessageEvents ServerMessageType = "events"
+)
+
 // LobbyMessage - сообщение "lobby": состояние лобби для одного игрока.
 type LobbyMessage struct {
-	Type  string     `json:"type"` // "lobby"
-	Lobby LobbyState `json:"lobby"`
+	Type  ServerMessageType `json:"type"`
+	Lobby LobbyState        `json:"lobby"`
 }
 
 // LobbyPhase - состояние лобби.
@@ -58,19 +69,29 @@ const (
 	CloseReasonInternal      CloseReason = "internal"       // баг на сервере при разборе сообщения
 )
 
+// ErrorCode обозначает прикладную ошибку протокола.
+type ErrorCode string
+
+// Коды ошибок лобби.
+const (
+	ErrorCallsignTaken  ErrorCode = "callsign_taken"
+	ErrorCallsignLocked ErrorCode = "callsign_locked"
+	ErrorPartnerMissing ErrorCode = "partner_missing"
+)
+
 // ErrorMessage - прикладная ошибка клиенту. Не путать с кодом закрытия
 // WebSocket: тот - транспорт (runErr), этот - JSON до/без закрытия.
 //
 // Коды - только из контракта (раздел 3.1): клиент не знает других.
 type ErrorMessage struct {
-	Type    string `json:"type"`              // "error"
-	Code    string `json:"code"`              // "callsign_taken" | "callsign_locked" | "partner_missing"
-	Message string `json:"message,omitempty"` // текст для логов клиента
+	Type    ServerMessageType `json:"type"`
+	Code    ErrorCode         `json:"code"`
+	Message string            `json:"message,omitempty"` // текст для логов клиента
 }
 
 // newErrorMessage собирает ошибку ErrorMessage.
-func newErrorMessage(code string, err error) ErrorMessage {
-	msg := ErrorMessage{Type: "error", Code: code}
+func newErrorMessage(code ErrorCode, err error) ErrorMessage {
+	msg := ErrorMessage{Type: ServerMessageError, Code: code}
 	if err != nil {
 		msg.Message = err.Error()
 	}
@@ -79,14 +100,14 @@ func newErrorMessage(code string, err error) ErrorMessage {
 
 // errorCode - код контракта для отказа команды. ok == false - отказ клиенту
 // не сообщается (мусор, неизвестный позывной, чужой пост): только лог.
-func errorCode(err error) (string, bool) {
+func errorCode(err error) (ErrorCode, bool) {
 	switch {
 	case errors.Is(err, ErrCallsignTaken):
-		return "callsign_taken", true
+		return ErrorCallsignTaken, true
 	case errors.Is(err, ErrCallsignLocked):
-		return "callsign_locked", true
+		return ErrorCallsignLocked, true
 	case errors.Is(err, ErrPartnerMissing):
-		return "partner_missing", true
+		return ErrorPartnerMissing, true
 	default:
 		return "", false
 	}
@@ -128,13 +149,18 @@ func (conn *Connection) Receive(data []byte) {
 		conn.log.Debug("message ignored", slog.Int("size", len(data)), logging.Err(err))
 		return
 	}
-	conn.log.Debug("message received", slog.String("type", cmd.kind()), slog.Int("size", len(data)))
+	conn.log.Debug("message received", slog.String("type", string(cmd.kind())), slog.Int("size", len(data)))
 	conn.ch.tell(commandEvent{conn: conn, cmd: cmd}) // канал закрыт - отвечать некому
 }
 
-// Disconnect сообщает каналу, что сокет закрыт или оборвался. Не ждёт.
+// Disconnect сообщает каналу об обрыве сокета. Не ждёт ответа.
 // Идемпотентен: повторный вызов (или вызов от устаревшей ручки) ничего
 // не делает.
 func (conn *Connection) Disconnect() {
 	conn.ch.tell(disconnectEvent{conn: conn})
+}
+
+// Leave сообщает о штатном закрытии сокета игроком.
+func (conn *Connection) Leave() {
+	conn.ch.tell(disconnectEvent{conn: conn, graceful: true})
 }

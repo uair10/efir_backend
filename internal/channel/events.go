@@ -57,7 +57,8 @@ type commandEvent struct {
 
 // disconnectEvent - сокет закрылся. Без ответа.
 type disconnectEvent struct {
-	conn *Connection
+	conn     *Connection
+	graceful bool
 }
 
 func (joinEvent) isEvent()       {}

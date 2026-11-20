@@ -152,7 +152,7 @@ func readLobby(t *testing.T, c *websocket.Conn) channel.LobbyState {
 	b := readRaw(t, c)
 	var m channel.LobbyMessage
 	require.NoError(t, json.Unmarshal(b, &m), "не JSON: %s", b)
-	require.Equal(t, "lobby", m.Type, "сообщение: %s", b)
+	require.Equal(t, channel.ServerMessageLobby, m.Type, "сообщение: %s", b)
 	return m.Lobby
 }
 
@@ -558,8 +558,31 @@ func TestWS_RemoveSendsNormalClosure(t *testing.T) {
 	checkError(t, rec, http.StatusUnauthorized)
 }
 
-// BR-5.4: гость отключился - хозяин видит connected=false по настоящему сокету.
-func TestWS_DisconnectBroadcast(t *testing.T) {
+// BR-5.1–5.2: обрыв по сети сохраняет пост, а токен позволяет вернуться.
+func TestWS_AbruptDisconnectAndReconnect(t *testing.T) {
+	t.Parallel()
+
+	e := newWSEnv(t)
+	host := e.create(t, channel.GameModeCoop)
+	guest := e.join(t, host.Code)
+	hc := e.dial(t, host)
+	readLobby(t, hc)
+	gc := e.dial(t, guest)
+	waitLobby(t, hc, eastConnected)
+
+	require.NoError(t, gc.CloseNow())
+
+	offline := readLobby(t, hc).Players[channel.PostEast]
+	require.NotNil(t, offline)
+	assert.False(t, offline.Connected)
+
+	reconnected := e.dial(t, guest)
+	assert.True(t, eastConnected(readLobby(t, reconnected)))
+	assert.True(t, eastConnected(readLobby(t, hc)))
+}
+
+// BR-5.4: код 1000 от гостя сразу освобождает пост.
+func TestWS_GracefulGuestDisconnectFreesPost(t *testing.T) {
 	t.Parallel()
 
 	e := newWSEnv(t)
@@ -572,7 +595,33 @@ func TestWS_DisconnectBroadcast(t *testing.T) {
 
 	require.NoError(t, gc.Close(websocket.StatusNormalClosure, "bye"))
 
-	waitLobby(t, hc, func(l channel.LobbyState) bool { return !eastConnected(l) })
+	require.Nil(t, readLobby(t, hc).Players[channel.PostEast])
+	rec := doRequest(e.handler, upgradeRequest(t, wsPath(guest.ChannelID, guest.Token), allowedOrigin))
+	checkError(t, rec, http.StatusUnauthorized)
+	e.join(t, host.Code)
+}
+
+// BR-5.4: код 1000 от хозяина закрывает канал и сокет гостя.
+func TestWS_GracefulHostDisconnectClosesChannel(t *testing.T) {
+	t.Parallel()
+
+	e := newWSEnv(t)
+	host := e.create(t, channel.GameModeCoop)
+	guest := e.join(t, host.Code)
+	hc := e.dial(t, host)
+	readLobby(t, hc)
+	gc := e.dial(t, guest)
+	waitLobby(t, hc, eastConnected)
+
+	require.NoError(t, hc.Close(websocket.StatusNormalClosure, "bye"))
+
+	require.Equal(t, websocket.StatusNormalClosure, expectClose(t, gc))
+	code, err := channel.ParseCode(host.Code)
+	require.NoError(t, err)
+	_, err = e.reg.ByCode(code)
+	require.ErrorIs(t, err, channel.ErrNotFound)
+	_, err = e.reg.ByID(host.ChannelID)
+	require.ErrorIs(t, err, channel.ErrNotFound)
 }
 
 // WithGame: шаблон "*" пропускает любой Origin и в ручной проверке, и в

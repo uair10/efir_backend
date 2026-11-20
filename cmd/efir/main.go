@@ -39,6 +39,8 @@ func run() error {
 	registry := channel.NewRegistry(cfg.Game.MaxChannels,
 		channel.WithLogger(logger),
 		channel.WithTick(cfg.Game.Tick),
+		channel.WithReconnectGrace(cfg.Game.ReconnectGrace),
+		channel.WithLobbyIdleTTL(cfg.Game.LobbyIdleTTL),
 	)
 	server := httpapi.New(logger, cfg.Server, registry, httpapi.WithGame(cfg.Game))
 

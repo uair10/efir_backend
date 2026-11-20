@@ -129,14 +129,18 @@ func (h *ChannelsWS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Run блокируется до закрытия соединения. Входящие - в Receive канала.
-	// Disconnect после Run: идемпотентен, снимет пост, если мы всё ещё там.
+	// После Run сообщаем каналу, ушёл ли клиент штатно.
 	started := time.Now()
 	runErr := sock.Run(ctx, receiveSafely(ctx, logger, conn.Receive, sock))
-	conn.Disconnect()
 
 	code := websocket.CloseStatus(runErr)
 	if code == -1 {
 		code = websocket.StatusAbnormalClosure // close-кадра не было: обрыв
+	}
+	if code == websocket.StatusNormalClosure {
+		conn.Leave()
+	} else {
+		conn.Disconnect()
 	}
 	logger.Log(ctx, closeLevel(code), "socket disconnected",
 		logging.CloseCode(int(code)),
