@@ -54,7 +54,7 @@ func decodeLobby(t *testing.T, m Message) LobbyMessage {
 	t.Helper()
 	lm, ok := m.Payload.(LobbyMessage)
 	require.True(t, ok, "payload %T, want LobbyMessage", m.Payload)
-	require.Equal(t, "lobby", lm.Type)
+	require.Equal(t, ServerMessageLobby, lm.Type)
 	// BR-4.1: лобби приходит после каждого изменения, выбрасывать его нельзя.
 	assert.False(t, m.Droppable, "лобби не должно быть Droppable")
 	return lm
@@ -382,13 +382,13 @@ func TestReceive_SetCallsign(t *testing.T) {
 
 	hostConn.Receive([]byte(`{"type":"set_callsign","callsign":"Нет такого"}`))
 	hostConn.Receive([]byte(`{"type":"set_callsign","callsign":"Второй"}`))
-	assert.Equal(t, ErrorMessage{Type: "error", Code: "callsign_taken", Message: ErrCallsignTaken.Error()},
+	assert.Equal(t, ErrorMessage{Type: ServerMessageError, Code: ErrorCallsignTaken, Message: ErrCallsignTaken.Error()},
 		nextError(t, hostSock), "неизвестный позывной молча пропущен, следом - отказ")
 
 	hostConn.Receive([]byte(`{"type":"set_ready","ready":true}`))
 	assert.True(t, nextLobby(t, hostSock).Lobby.Players[PostWest].Ready)
 	hostConn.Receive([]byte(`{"type":"set_callsign","callsign":"Заря"}`))
-	assert.Equal(t, "callsign_locked", nextError(t, hostSock).Code)
+	assert.Equal(t, ErrorCallsignLocked, nextError(t, hostSock).Code)
 }
 
 // BR-5.6, NFR-5: Registry.Close закрывает клиентов с CloseReasonShutdown (-> 1001).

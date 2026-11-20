@@ -108,7 +108,7 @@ func TestRoom_ShiftIsFinal(t *testing.T) {
 	r.tick(countdownFrom)
 	require.Equal(t, LobbyPhaseShift, r.phase)
 
-	r.disconnect(r.hostConn)
+	r.disconnect(r.hostConn, false)
 	r.mustConnect(t, r.west.token, newFakeSocket())
 	assert.Equal(t, LobbyPhaseShift, r.phase)
 }

@@ -30,6 +30,8 @@ func TestLoad(t *testing.T) {
 			MaxChannels:       500,
 			WSMaxMessageBytes: 4096,
 			WSAllowedOrigins:  []string{"localhost:5173"},
+			ReconnectGrace:    60 * time.Second,
+			LobbyIdleTTL:      10 * time.Minute,
 		},
 	}
 
@@ -41,6 +43,9 @@ func TestLoad(t *testing.T) {
 	overridden.Game.MaxChannels = 7
 	overridden.Game.WSMaxMessageBytes = 8192
 	overridden.Game.WSAllowedOrigins = []string{"localhost:5173", "efir.example.com"}
+
+	overridden.Game.ReconnectGrace = 20 * time.Second
+	overridden.Game.LobbyIdleTTL = 2 * time.Minute
 
 	tests := []struct {
 		name     string
@@ -63,6 +68,8 @@ func TestLoad(t *testing.T) {
 				"GAME_MAX_CHANNELS":       "7",
 				"GAME_WS_MAX_MESSAGE":     "8192",
 				"GAME_WS_ALLOWED_ORIGINS": "localhost:5173,efir.example.com",
+				"GAME_RECONNECT_GRACE":    "20s",
+				"GAME_LOBBY_IDLE_TTL":     "2m",
 			},
 			want: overridden,
 		},
@@ -111,8 +118,10 @@ func TestLoad(t *testing.T) {
 				"SERVER_READ_TIMEOUT":   "-1s",
 				"SERVER_MAX_BODY_BYTES": "0",
 				"GAME_MAX_CHANNELS":     "0",
+				"GAME_RECONNECT_GRACE":  "0s",
+				"GAME_LOBBY_IDLE_TTL":   "-1s",
 			},
-			wantErrs: []string{"SERVER_PORT", "SERVER_READ_TIMEOUT", "SERVER_MAX_BODY_BYTES", "GAME_MAX_CHANNELS"},
+			wantErrs: []string{"SERVER_PORT", "SERVER_READ_TIMEOUT", "SERVER_MAX_BODY_BYTES", "GAME_MAX_CHANNELS", "GAME_RECONNECT_GRACE", "GAME_LOBBY_IDLE_TTL"},
 		},
 		{
 			name: "несколько ошибок разбора сразу",

@@ -43,7 +43,9 @@ type (
 		MaxChannels       int           `env:"MAX_CHANNELS" envDefault:"500"`
 		WSMaxMessageBytes int           `env:"WS_MAX_MESSAGE" envDefault:"4096"`
 		// Шаблоны host[:port] без схемы, как websocket.AcceptOptions.OriginPatterns.
-		WSAllowedOrigins []string `env:"WS_ALLOWED_ORIGINS" envDefault:"localhost:5173"`
+		WSAllowedOrigins []string      `env:"WS_ALLOWED_ORIGINS" envDefault:"localhost:5173"`
+		ReconnectGrace   time.Duration `env:"RECONNECT_GRACE" envDefault:"60s"`
+		LobbyIdleTTL     time.Duration `env:"LOBBY_IDLE_TTL" envDefault:"10m"`
 	}
 
 	// Log - настройки логирования.
@@ -113,6 +115,8 @@ func (c Config) validate() error {
 		_, err := path.Match(p, "")
 		check(err == nil, "GAME_WS_ALLOWED_ORIGINS: bad pattern %q", p)
 	}
+	check(c.Game.ReconnectGrace > 0, "GAME_RECONNECT_GRACE must be positive, got %s", c.Game.ReconnectGrace)
+	check(c.Game.LobbyIdleTTL > 0, "GAME_LOBBY_IDLE_TTL must be positive, got %s", c.Game.LobbyIdleTTL)
 
 	if len(problems) == 0 {
 		return nil

@@ -14,9 +14,11 @@ import (
 )
 
 const (
-	maxCodeAttempts = 10 // попыток подобрать свободный код
-	channelIDBytes  = 16
-	defaultTick     = 50 * time.Millisecond // GAME_TICK по умолчанию
+	maxCodeAttempts       = 10 // попыток подобрать свободный код
+	channelIDBytes        = 16
+	defaultTick           = 50 * time.Millisecond
+	defaultReconnectGrace = time.Minute
+	defaultLobbyIdleTTL   = 10 * time.Minute
 )
 
 var errEmptyCode = errors.New("code generator returned empty code")
@@ -31,10 +33,13 @@ var errEmptyCode = errors.New("code generator returned empty code")
 //   - Удаляет каналы: хозяин ушел, простой, SIGTERM. Код снова свободен.
 //   - Безопасен для вызова из многих горутин.
 type Registry struct {
-	maxChannels int
-	codeGen     func() (Code, error)
-	tick        time.Duration
-	logger      *slog.Logger // базовый логгер каналов, без request_id
+	maxChannels    int
+	codeGen        func() (Code, error)
+	tick           time.Duration
+	reconnectGrace time.Duration
+	lobbyIdleTTL   time.Duration
+	running        sync.WaitGroup
+	logger         *slog.Logger // базовый логгер каналов, без request_id
 
 	mu     sync.Mutex
 	byID   map[string]*Channel // все каналы, включая одиночные
@@ -56,6 +61,16 @@ func WithTick(d time.Duration) Option {
 	return func(r *Registry) { r.tick = d }
 }
 
+// WithReconnectGrace задаёт срок сохранения поста после обрыва.
+func WithReconnectGrace(d time.Duration) Option {
+	return func(r *Registry) { r.reconnectGrace = d }
+}
+
+// WithLobbyIdleTTL задаёт срок жизни лобби без подключённых игроков.
+func WithLobbyIdleTTL(d time.Duration) Option {
+	return func(r *Registry) { r.lobbyIdleTTL = d }
+}
+
 // WithLogger задает базовый логгер каналов. Без него каналы молчат.
 func WithLogger(l *slog.Logger) Option {
 	return func(r *Registry) { r.logger = l }
@@ -64,12 +79,14 @@ func WithLogger(l *slog.Logger) Option {
 // NewRegistry создает пустой реестр на maxChannels каналов (GAME_MAX_CHANNELS).
 func NewRegistry(maxChannels int, opts ...Option) *Registry {
 	r := &Registry{
-		maxChannels: maxChannels,
-		codeGen:     newCode,
-		tick:        defaultTick,
-		logger:      logging.Discard(),
-		byID:        make(map[string]*Channel),
-		byCode:      make(map[Code]*Channel),
+		maxChannels:    maxChannels,
+		codeGen:        newCode,
+		tick:           defaultTick,
+		reconnectGrace: defaultReconnectGrace,
+		lobbyIdleTTL:   defaultLobbyIdleTTL,
+		logger:         logging.Discard(),
+		byID:           make(map[string]*Channel),
+		byCode:         make(map[Code]*Channel),
 	}
 	for _, o := range opts {
 		o(r)
@@ -107,8 +124,10 @@ func (r *Registry) Create(ctx context.Context, mode GameMode) (*Channel, Token, 
 	if err != nil {
 		return nil, Token{}, fmt.Errorf("registry: create channel: %w", err)
 	}
-	ch, tok, err := startChannel(channelConfig{id: id, code: code, mode: mode, tick: r.tick, log: r.logger})
+	r.running.Add(1)
+	ch, tok, err := startChannel(channelConfig{id: id, code: code, mode: mode, tick: r.tick, log: r.logger, registry: r})
 	if err != nil {
+		r.running.Done()
 		return nil, Token{}, fmt.Errorf("registry: create channel: %w", err)
 	}
 	r.byID[id] = ch
@@ -127,20 +146,14 @@ func (r *Registry) Create(ctx context.Context, mode GameMode) (*Channel, Token, 
 func (r *Registry) Close() {
 	r.mu.Lock()
 	r.closed = true
-	chans := make([]*Channel, 0, len(r.byID))
 	for _, ch := range r.byID {
-		chans = append(chans, ch)
-	}
-	r.byID = make(map[string]*Channel)
-	r.byCode = make(map[Code]*Channel)
-	r.mu.Unlock()
-
-	for _, ch := range chans {
 		ch.Stop(CloseReasonShutdown)
 	}
-	for _, ch := range chans {
-		ch.Wait()
-	}
+	clear(r.byID)
+	clear(r.byCode)
+	r.mu.Unlock()
+
+	r.running.Wait()
 }
 
 // ByCode ищет канал для входа гостя; дальше гость входит через ch.Join(ctx).

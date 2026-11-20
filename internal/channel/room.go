@@ -29,6 +29,12 @@ type room struct {
 
 	conns map[Post]*Connection
 
+	reconnectGrace time.Duration
+	lobbyIdleTTL   time.Duration
+	reconnectUntil map[Post]time.Time
+	idleSince      time.Time
+	shiftPaused    bool
+
 	phase     LobbyPhase
 	countdown time.Duration // сколько осталось до shift; значим только в starting
 }
@@ -41,12 +47,16 @@ func newRoom(code Code, mode GameMode, log *slog.Logger) (*room, Token, error) {
 		return nil, Token{}, err
 	}
 	r := &room{
-		code:  code,
-		mode:  mode,
-		log:   log,
-		west:  newPlayer(CallsignFirst, tok),
-		conns: make(map[Post]*Connection, postsPerChannel),
-		phase: LobbyPhaseLobby,
+		code:           code,
+		mode:           mode,
+		log:            log,
+		west:           newPlayer(CallsignFirst, tok),
+		conns:          make(map[Post]*Connection, postsPerChannel),
+		phase:          LobbyPhaseLobby,
+		reconnectGrace: defaultReconnectGrace,
+		lobbyIdleTTL:   defaultLobbyIdleTTL,
+		reconnectUntil: make(map[Post]time.Time, postsPerChannel),
+		idleSince:      time.Now(),
 	}
 	if mode == GameModeSolo {
 		r.east = newBot()
@@ -54,8 +64,9 @@ func newRoom(code Code, mode GameMode, log *slog.Logger) (*room, Token, error) {
 	return r, tok, nil
 }
 
-// handle выполняет одно событие. Единственная точка входа в room снаружи.
-func (r *room) handle(ev event) {
+// handle выполняет одно событие и возвращает true при штатном уходе хозяина.
+func (r *room) handle(ev event) bool {
+	r.expireDisconnected(time.Now())
 	switch ev := ev.(type) {
 	case joinEvent:
 		ev.respond(r.join(ev.log))
@@ -76,8 +87,9 @@ func (r *room) handle(ev event) {
 	case commandEvent:
 		r.command(ev.conn, ev.cmd)
 	case disconnectEvent:
-		r.disconnect(ev.conn)
+		return r.disconnect(ev.conn, ev.graceful)
 	}
+	return false
 }
 
 // join сажает гостя на east с первым свободным позывным и рассылает лобби.
@@ -85,9 +97,11 @@ func (r *room) join(log *slog.Logger) (Token, error) {
 	if r.east != nil {
 		return Token{}, ErrFull
 	}
-	// Занят только позывной хозяина, свободный есть всегда. Проверка - на
-	// случай, если постов или позывных станет иначе.
-	cs, ok := firstFreeCallsign(r.west.Callsign)
+	var hostCallsign Callsign
+	if r.west != nil {
+		hostCallsign = r.west.Callsign
+	}
+	cs, ok := firstFreeCallsign(hostCallsign)
 	if !ok {
 		return Token{}, ErrFull
 	}
@@ -115,21 +129,81 @@ func (r *room) connect(ev connectEvent) (*Connection, error) {
 		old.sock.Close(CloseReasonReplaced)
 	}
 	r.conns[post] = conn
+	delete(r.reconnectUntil, post)
+	r.idleSince = time.Time{}
 	conn.log.Info("socket connected")
 	r.recompute()
 	r.broadcastLobby()
+	if r.phase == LobbyPhaseShift {
+		r.sendShiftSnapshot(conn)
+	}
 	return conn, nil
 }
 
-// disconnect снимает подключение с поста. Пост за игроком остаётся.
-// Устаревшая ручка (игрок уже переподключился) ничего не делает.
-func (r *room) disconnect(conn *Connection) {
+// disconnect возвращает true, если уход хозяина закрывает канал.
+func (r *room) disconnect(conn *Connection, graceful bool) bool {
 	if r.conns[conn.post] != conn {
-		return
+		return false
 	}
 	delete(r.conns, conn.post)
+	now := time.Now()
+	if len(r.conns) == 0 {
+		r.idleSince = now
+	}
+	if graceful {
+		if conn.post == PostWest {
+			return true
+		}
+		r.releasePost(conn.post)
+	} else {
+		r.reconnectUntil[conn.post] = now.Add(r.reconnectGrace)
+	}
 	r.recompute()
 	r.broadcastLobby()
+	return false
+}
+
+// expireDisconnected обрабатывает истёкшие сроки возврата игроков.
+func (r *room) expireDisconnected(now time.Time) {
+	lobbyChanged := false
+	for post, deadline := range r.reconnectUntil {
+		if now.Before(deadline) {
+			continue
+		}
+		delete(r.reconnectUntil, post)
+		if r.phase == LobbyPhaseShift {
+			r.playerAt(post).token = Token{}
+			r.shiftPaused = true
+			if mate := r.conns[mateOf(post)]; mate != nil {
+				mate.sock.Send(Message{Payload: shiftEventsMessage{
+					Type:   ServerMessageEvents,
+					Events: []shiftRadioEvent{{Kind: shiftEventRadio, From: radioSourceSystem, Text: "Напарник пропал из эфира"}},
+				}})
+				r.sendShiftSnapshot(mate)
+			}
+			continue
+		}
+		r.releasePost(post)
+		lobbyChanged = true
+	}
+	if lobbyChanged {
+		r.recompute()
+		r.broadcastLobby()
+	}
+}
+
+// releasePost освобождает пост и аннулирует токен занимавшего его игрока.
+func (r *room) releasePost(post Post) {
+	if post == PostWest {
+		r.west = nil
+	} else {
+		r.east = nil
+	}
+}
+
+// idleExpired проверяет, истёк ли срок простоя лобби без подключённых игроков.
+func (r *room) idleExpired(now time.Time) bool {
+	return r.phase == LobbyPhaseLobby && !r.idleSince.IsZero() && now.Sub(r.idleSince) >= r.lobbyIdleTTL
 }
 
 // command выполняет команду клиента. Успех - рассылка лобби,
@@ -157,7 +231,7 @@ func (r *room) command(conn *Connection, cmd command) {
 // Остальное (мусор, не та фаза) - только в debug.
 // Вызывается из горутины канала.
 func (conn *Connection) reject(cmd command, err error) {
-	conn.log.Debug("command rejected", slog.String("kind", cmd.kind()), logging.Err(err))
+	conn.log.Debug("command rejected", slog.String("kind", string(cmd.kind())), logging.Err(err))
 	if code, ok := errorCode(err); ok {
 		conn.sock.Send(Message{Payload: newErrorMessage(code, err)})
 	}
@@ -305,7 +379,7 @@ func (r *room) lobbyFor(you Post) LobbyMessage {
 	if r.phase == LobbyPhaseStarting {
 		countdown = new(r.countdownSeconds())
 	}
-	return LobbyMessage{Type: "lobby", Lobby: LobbyState{
+	return LobbyMessage{Type: ServerMessageLobby, Lobby: LobbyState{
 		Code:      r.code.String(),
 		Mode:      r.mode,
 		Phase:     r.phase,

@@ -15,16 +15,19 @@ var errInvalidCommand = errors.New("invalid command")
 // Игнорируется, как и в смене.
 var errWrongPhase = errors.New("command not allowed in this phase")
 
+// clientMessageType определяет тип входящего WebSocket-сообщения.
+type clientMessageType string
+
 // Типы входящих сообщений лобби (раздел 3.1 контракта).
 const (
-	typeSetCallsign = "set_callsign"
-	typeSetReady    = "set_ready"
+	typeSetCallsign clientMessageType = "set_callsign"
+	typeSetReady    clientMessageType = "set_ready"
 )
 
 // envelope - общее у всех входящих сообщений. Поля команды лежат рядом с type,
 // без вложенного объекта: {"type":"set_callsign","callsign":"Сокол"}.
 type envelope struct {
-	Type string `json:"type"`
+	Type clientMessageType `json:"type"`
 }
 
 // command - разобранная команда клиента. Только данные: выполняет её room
@@ -33,7 +36,7 @@ type envelope struct {
 //sumtype:decl
 type command interface {
 	// kind - type сообщения, для логов.
-	kind() string
+	kind() clientMessageType
 }
 
 // setCallsign - клиент меняет свой позывной.
@@ -46,8 +49,8 @@ type setReady struct {
 	Ready bool `json:"ready"`
 }
 
-func (setCallsign) kind() string { return typeSetCallsign }
-func (setReady) kind() string    { return typeSetReady }
+func (setCallsign) kind() clientMessageType { return typeSetCallsign }
+func (setReady) kind() clientMessageType    { return typeSetReady }
 
 // parseCommand разбирает JSON в конкретную команду.
 // Не JSON или неизвестный type - errInvalidCommand.

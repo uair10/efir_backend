@@ -25,7 +25,7 @@ import (
 
 // bubbleRegistry - реестр внутри пузыря synctest. Cleanup пузыря закрывает
 // его до того, как synctest.Test начнёт ждать горутины каналов.
-func bubbleRegistry(t *testing.T) *Registry { // TODO Это что и почему такой нейминг?
+func bubbleRegistry(t *testing.T) *Registry {
 	t.Helper()
 	r := NewRegistry(testMaxChannels)
 	t.Cleanup(r.Close)
@@ -171,7 +171,7 @@ func TestLobby_SetCallsign_TakenGoesToSenderOnly(t *testing.T) {
 
 		send(p.guestConn, `{"type":"set_callsign","callsign":"Первый"}`)
 
-		assert.Equal(t, ErrorMessage{Type: "error", Code: "callsign_taken", Message: ErrCallsignTaken.Error()},
+		assert.Equal(t, ErrorMessage{Type: ServerMessageError, Code: ErrorCallsignTaken, Message: ErrCallsignTaken.Error()},
 			onlyError(t, p.guestSock))
 		assert.Empty(t, drain(p.hostSock), "напарнику отказ не шлём")
 	})
@@ -204,7 +204,7 @@ func TestLobby_SetCallsign_BotsCallsignTaken(t *testing.T) {
 		drain(sock)
 
 		send(conn, `{"type":"set_callsign","callsign":"Второй"}`)
-		assert.Equal(t, "callsign_taken", onlyError(t, sock).Code)
+		assert.Equal(t, ErrorCallsignTaken, onlyError(t, sock).Code)
 	})
 }
 
@@ -219,7 +219,7 @@ func TestLobby_SetCallsign_LockedWhileReady(t *testing.T) {
 		send(p.hostConn, `{"type":"set_ready","ready":true}`)
 		drain(p.hostSock)
 		send(p.hostConn, `{"type":"set_callsign","callsign":"Заря"}`)
-		assert.Equal(t, "callsign_locked", onlyError(t, p.hostSock).Code)
+		assert.Equal(t, ErrorCallsignLocked, onlyError(t, p.hostSock).Code)
 
 		send(p.hostConn, `{"type":"set_ready","ready":false}`)
 		drain(p.hostSock)
@@ -241,7 +241,7 @@ func TestLobby_SetReady_PartnerMissing(t *testing.T) {
 		drain(sock)
 
 		send(conn, `{"type":"set_ready","ready":true}`)
-		assert.Equal(t, "partner_missing", onlyError(t, sock).Code, "лобби не меняется")
+		assert.Equal(t, ErrorPartnerMissing, onlyError(t, sock).Code, "лобби не меняется")
 
 		// "Не готов" в одиночестве - не ошибка.
 		send(conn, `{"type":"set_ready","ready":false}`)
@@ -405,7 +405,7 @@ func TestLobby_ShiftIsFinal(t *testing.T) {
 		p.guestConn.Disconnect()
 		sock := newFakeSocket()
 		mustConnect(t, p.ch, p.guest, sock)
-		l := lastLobby(t, sock)
+		l := nextLobby(t, sock).Lobby
 		assert.Equal(t, LobbyPhaseShift, l.Phase, "переподключение не перезапускает отсчёт")
 		assert.Nil(t, l.Countdown)
 		drain(p.hostSock)
