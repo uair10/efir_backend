@@ -9,16 +9,6 @@ import (
 
 const lobbyCountdown = 3 * time.Second
 
-// LobbyPhase определяет этап подготовки игроков к смене.
-type LobbyPhase string
-
-// Этапы подготовки до инструктажа и после запуска игры.
-const (
-	LobbyPhaseLobby    LobbyPhase = "lobby"
-	LobbyPhaseStarting LobbyPhase = "starting"
-	LobbyPhaseShift    LobbyPhase = "shift"
-)
-
 // Ошибки, связанные со сменой.
 var (
 	ErrPostTaken          = errors.New("channel is full")
@@ -53,10 +43,9 @@ type ShiftUpdate struct {
 type Shift struct {
 	mode         Mode
 	participants map[Post]Participant
-	lobbyPhase   LobbyPhase
-	countdown    time.Duration
 
 	phase        Phase
+	countdown    time.Duration
 	briefed      []Post
 	dayRemaining time.Duration
 	paused       bool
@@ -67,7 +56,7 @@ type Shift struct {
 func NewShift(mode Mode) *Shift {
 	s := &Shift{
 		mode:         mode,
-		lobbyPhase:   LobbyPhaseLobby,
+		phase:        PhaseLobby,
 		participants: map[Post]Participant{PostWest: {Callsign: CallsignFirst}},
 	}
 	if mode == ModeSolo {
@@ -79,8 +68,18 @@ func NewShift(mode Mode) *Shift {
 // Mode возвращает режим смены.
 func (shift *Shift) Mode() Mode { return shift.mode }
 
-// LobbyPhase возвращает этап подготовки. После запуска сохраняется LobbyPhaseShift.
-func (shift *Shift) LobbyPhase() LobbyPhase { return shift.lobbyPhase }
+// Phase возвращает текущий этап смены.
+func (shift *Shift) Phase() Phase { return shift.phase }
+
+// Started сообщает, что смена дошла до инструктажа или более поздней фазы.
+func (shift *Shift) Started() bool {
+	switch shift.phase {
+	case PhaseBriefing, PhaseDay, PhaseNight, PhaseReport, PhaseEnd:
+		return true
+	default:
+		return false
+	}
+}
 
 // Participant возвращает состояние поста и признак того, что он занят.
 func (shift *Shift) Participant(post Post) (Participant, bool) {
@@ -121,7 +120,7 @@ func (shift *Shift) Leave(post Post) {
 
 // ReconnectExpired освобождает пост в лобби или ставит начавшуюся смену на паузу.
 func (shift *Shift) ReconnectExpired(post Post) ShiftUpdate {
-	if shift.lobbyPhase != LobbyPhaseShift {
+	if !shift.Started() {
 		shift.Leave(post)
 		return ShiftUpdate{LobbyChanged: true}
 	}
@@ -167,7 +166,7 @@ func (shift *Shift) Tick(dt time.Duration) ShiftUpdate {
 	if dt <= 0 || shift.paused {
 		return ShiftUpdate{}
 	}
-	if shift.lobbyPhase == LobbyPhaseStarting {
+	if shift.phase == PhaseStarting {
 		before := shift.CountdownSeconds()
 		shift.countdown = max(0, shift.countdown-dt)
 		if shift.countdown == 0 {
@@ -193,7 +192,7 @@ func (shift *Shift) CountdownSeconds() int {
 
 // setCallsign разрешает выбрать свободный позывной до подтверждения готовности и запуска смены.
 func (shift *Shift) setCallsign(from Post, p Participant, callsign Callsign) (ShiftUpdate, error) {
-	if shift.lobbyPhase == LobbyPhaseShift {
+	if shift.Started() {
 		return ShiftUpdate{}, ErrWrongPhase
 	}
 	if _, ok := ParseCallsign(callsign.String()); !ok {
@@ -212,7 +211,7 @@ func (shift *Shift) setCallsign(from Post, p Participant, callsign Callsign) (Sh
 
 // setReady меняет готовность игрока и пересчитывает условия запуска смены.
 func (shift *Shift) setReady(from Post, p Participant, ready bool) (ShiftUpdate, error) {
-	if shift.lobbyPhase == LobbyPhaseShift {
+	if shift.Started() {
 		return ShiftUpdate{}, ErrWrongPhase
 	}
 	if _, ok := shift.participants[OtherPost(from)]; ready && !ok {
@@ -221,32 +220,31 @@ func (shift *Shift) setReady(from Post, p Participant, ready bool) (ShiftUpdate,
 	p.Ready = ready
 	shift.participants[from] = p
 	shift.reconcileLobby()
-	return ShiftUpdate{LobbyChanged: true, SnapshotChanged: shift.lobbyPhase == LobbyPhaseShift}, nil
+	return ShiftUpdate{LobbyChanged: true, SnapshotChanged: shift.Started()}, nil
 }
 
 // reconcileLobby запускает отсчёт при готовности обоих постов и сбрасывает
 // его, если кто-то снял готовность или потерял связь. Бот всегда готов и на связи.
 func (shift *Shift) reconcileLobby() {
-	if shift.lobbyPhase == LobbyPhaseShift {
+	if shift.Started() {
 		return
 	}
 	west, east := shift.participants[PostWest], shift.participants[PostEast]
 	if !west.Ready || !east.Ready || !west.Connected || !east.Connected {
-		shift.lobbyPhase = LobbyPhaseLobby
+		shift.phase = PhaseLobby
 		shift.countdown = 0
 		return
 	}
 	if shift.mode == ModeSolo {
 		shift.beginBriefing()
-	} else if shift.lobbyPhase == LobbyPhaseLobby {
-		shift.lobbyPhase = LobbyPhaseStarting
+	} else if shift.phase == PhaseLobby {
+		shift.phase = PhaseStarting
 		shift.countdown = lobbyCountdown
 	}
 }
 
 // beginBriefing завершает отсчёт и задаёт начальную энергию постов и запас времени на первый день.
 func (shift *Shift) beginBriefing() {
-	shift.lobbyPhase = LobbyPhaseShift
 	shift.countdown = 0
 	shift.phase = PhaseBriefing
 	shift.dayRemaining = FirstDaySeconds * time.Second

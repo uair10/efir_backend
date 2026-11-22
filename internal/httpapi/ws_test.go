@@ -701,11 +701,11 @@ func TestWS_ReconnectGetsBriefingSnapshot(t *testing.T) {
 
 	writeText(t, first, `{"type":"command","command":{"kind":"complete_briefing"}}`)
 	writeText(t, first, `{"type":"set_ready","ready":true}`)
-	require.Equal(t, channel.LobbyPhaseShift, readLobby(t, first).Phase)
+	require.Equal(t, game.PhaseBriefing, readLobby(t, first).Phase)
 	require.NoError(t, first.CloseNow())
 
 	reconnected := e.dial(t, host)
-	require.Equal(t, channel.LobbyPhaseShift, readLobby(t, reconnected).Phase)
+	require.Equal(t, game.PhaseBriefing, readLobby(t, reconnected).Phase)
 	type briefingSnapshot struct {
 		Phase  game.Phase `json:"phase"`
 		Energy int        `json:"energy"`
@@ -732,7 +732,7 @@ func TestWS_ShiftCommandsReachGame(t *testing.T) {
 	readLobby(t, c)
 
 	writeText(t, c, `{"type":"set_ready","ready":true}`)
-	require.Equal(t, channel.LobbyPhaseShift, readLobby(t, c).Phase)
+	require.Equal(t, game.PhaseBriefing, readLobby(t, c).Phase)
 	readShiftPhase(t, c, game.PhaseBriefing)
 
 	writeText(t, c, `{"type":"command","command":{"kind":"complete_briefing"}}`)
@@ -742,6 +742,11 @@ func TestWS_ShiftCommandsReachGame(t *testing.T) {
 	writeText(t, c, `{"type":"command","command":{"kind":"start_night"}}`)
 	night := readShiftPhase(t, c, game.PhaseNight)
 	assert.Greater(t, night, day)
+
+	require.NoError(t, c.CloseNow())
+	reconnected := e.dial(t, host)
+	require.Equal(t, game.PhaseNight, readLobby(t, reconnected).Phase)
+	assert.Equal(t, night, readShiftPhase(t, reconnected, game.PhaseNight))
 }
 
 // readShiftPhase ждёт снимок смены в нужной фазе и возвращает энергию поста.

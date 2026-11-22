@@ -103,11 +103,11 @@ func (actor *channelActor) connect(ev connectEvent) (*Connection, error) {
 	delete(actor.reconnectUntil, post)
 	actor.idleSince = time.Time{}
 	conn.log.Info("socket connected")
-	before := actor.shift.LobbyPhase()
+	before := actor.shift.Phase()
 	actor.shift.SetConnected(post, true)
 	actor.logLobbyTransition(before)
 	actor.broadcastLobby()
-	if actor.shift.LobbyPhase() == LobbyPhaseShift {
+	if actor.shift.Started() {
 		actor.sendShiftSnapshot(conn, false)
 	}
 	return conn, nil
@@ -123,7 +123,7 @@ func (actor *channelActor) disconnect(conn *Connection, graceful bool) bool {
 	if len(actor.conns) == 0 {
 		actor.idleSince = now
 	}
-	before := actor.shift.LobbyPhase()
+	before := actor.shift.Phase()
 	actor.shift.SetConnected(conn.post, false)
 	if graceful {
 		if conn.post == game.PostWest {
@@ -141,7 +141,7 @@ func (actor *channelActor) disconnect(conn *Connection, graceful bool) bool {
 
 // expireDisconnected обрабатывает истёкшие сроки возврата игроков.
 func (actor *channelActor) expireDisconnected(now time.Time) {
-	before := actor.shift.LobbyPhase()
+	before := actor.shift.Phase()
 	lobbyChanged := false
 	for post, deadline := range actor.reconnectUntil {
 		if now.Before(deadline) {
@@ -153,7 +153,7 @@ func (actor *channelActor) expireDisconnected(now time.Time) {
 		lobbyChanged = lobbyChanged || update.LobbyChanged
 		update.LobbyChanged = false
 		actor.publish(before, nil, update)
-		before = actor.shift.LobbyPhase()
+		before = actor.shift.Phase()
 	}
 	if lobbyChanged {
 		actor.broadcastLobby()
@@ -162,7 +162,7 @@ func (actor *channelActor) expireDisconnected(now time.Time) {
 
 // idleExpired проверяет, истёк ли срок простоя лобби без подключённых игроков.
 func (actor *channelActor) idleExpired(now time.Time) bool {
-	return actor.shift.LobbyPhase() == LobbyPhaseLobby && !actor.idleSince.IsZero() && now.Sub(actor.idleSince) >= actor.lobbyIdleTTL
+	return actor.shift.Phase() == game.PhaseLobby && !actor.idleSince.IsZero() && now.Sub(actor.idleSince) >= actor.lobbyIdleTTL
 }
 
 // command передаёт команду смене, только если подключение игрока всё ещё актуально.
@@ -170,7 +170,7 @@ func (actor *channelActor) command(conn *Connection, cmd game.Command, kind stri
 	if actor.conns[conn.post] != conn {
 		return // связь перепривязана к другому подключению
 	}
-	before := actor.shift.LobbyPhase()
+	before := actor.shift.Phase()
 	update, err := actor.shift.Apply(conn.post, cmd)
 	if err != nil {
 		conn.reject(kind, err)
@@ -189,28 +189,30 @@ func (conn *Connection) reject(kind string, err error) {
 
 // tick передаёт смене прошедшее время и публикует результат.
 func (actor *channelActor) tick(dt time.Duration) {
-	before := actor.shift.LobbyPhase()
+	before := actor.shift.Phase()
 	actor.publish(before, nil, actor.shift.Tick(dt))
 }
 
 // logLobbyTransition записывает запуск или отмену отсчёта и начало смены.
-func (actor *channelActor) logLobbyTransition(before game.LobbyPhase) {
-	after := actor.shift.LobbyPhase()
+func (actor *channelActor) logLobbyTransition(before game.Phase) {
+	after := actor.shift.Phase()
 	if before == after {
 		return
 	}
 	switch after {
-	case LobbyPhaseStarting:
+	case game.PhaseStarting:
 		actor.log.Info("countdown started")
-	case LobbyPhaseLobby:
+	case game.PhaseLobby:
 		actor.log.Info("countdown cancelled")
-	case LobbyPhaseShift:
+	case game.PhaseBriefing:
 		actor.log.Info("shift started")
+	case game.PhaseDay, game.PhaseNight, game.PhaseReport, game.PhaseEnd:
+		// Переходы после инструктажа не относятся к журналу лобби.
 	}
 }
 
 // publish отправляет личный ответ только автору команды, а общие события и снимки — всем подключённым.
-func (actor *channelActor) publish(before game.LobbyPhase, sender *Connection, update game.ShiftUpdate) {
+func (actor *channelActor) publish(before game.Phase, sender *Connection, update game.ShiftUpdate) {
 	actor.logLobbyTransition(before)
 	if update.LobbyChanged {
 		actor.broadcastLobby()
@@ -260,13 +262,13 @@ func (actor *channelActor) lobbyFor(you game.Post) LobbyMessage {
 		}
 	}
 	var countdown *int
-	if actor.shift.LobbyPhase() == LobbyPhaseStarting {
+	if actor.shift.Phase() == game.PhaseStarting {
 		countdown = new(actor.shift.CountdownSeconds())
 	}
 	return LobbyMessage{Type: ServerMessageLobby, Lobby: LobbyState{
 		Code:      actor.code.String(),
 		Mode:      actor.shift.Mode(),
-		Phase:     actor.shift.LobbyPhase(),
+		Phase:     actor.shift.Phase(),
 		Countdown: countdown,
 		You:       you,
 		Players:   players,

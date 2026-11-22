@@ -147,7 +147,7 @@ func TestConnect_HostGetsLobby(t *testing.T) {
 	lm := nextLobby(t, hostSock).Lobby
 	assert.Equal(t, ch.Code().String(), lm.Code)
 	assert.Equal(t, game.ModeCoop, lm.Mode)
-	assert.Equal(t, LobbyPhaseLobby, lm.Phase)
+	assert.Equal(t, game.PhaseLobby, lm.Phase)
 	assert.Nil(t, lm.Countdown)
 	assert.Equal(t, game.PostWest, lm.You)
 

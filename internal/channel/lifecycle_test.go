@@ -173,7 +173,7 @@ func TestLifecycle_ShiftReconnectAndExpiry(t *testing.T) {
 		synctest.Wait()
 
 		lobby := nextLobby(t, guestSock).Lobby
-		require.Equal(t, LobbyPhaseShift, lobby.Phase)
+		require.Equal(t, game.PhaseBriefing, lobby.Phase)
 		require.NotNil(t, lobby.Players[game.PostEast])
 		assert.True(t, lobby.Players[game.PostEast].Connected)
 

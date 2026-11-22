@@ -28,21 +28,11 @@ type LobbyMessage struct {
 	Lobby LobbyState        `json:"lobby"`
 }
 
-// LobbyPhase - этап подготовки смены в представлении канала.
-type LobbyPhase = game.LobbyPhase
-
-// Состояния лобби в сообщениях канала.
-const (
-	LobbyPhaseLobby    = game.LobbyPhaseLobby
-	LobbyPhaseStarting = game.LobbyPhaseStarting
-	LobbyPhaseShift    = game.LobbyPhaseShift
-)
-
 // LobbyState - лобби глазами игрока на посту You.
 type LobbyState struct {
 	Code      string                     `json:"code"`
 	Mode      game.Mode                  `json:"mode"`
-	Phase     LobbyPhase                 `json:"phase"`     // "lobby" | "starting" | "shift"
+	Phase     game.Phase                 `json:"phase"`     // текущая фаза смены
 	Countdown *int                       `json:"countdown"` // секунды до старта; nil - отсчёта нет
 	You       game.Post                  `json:"you"`       // пост получателя: лобби у каждого своё
 	Players   map[game.Post]*LobbyPlayer `json:"players"`   // nil - пост свободен

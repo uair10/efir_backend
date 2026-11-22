@@ -60,7 +60,7 @@ func TestActor_CountdownByTicks(t *testing.T) {
 
 	actor := newTestActor(t, game.ModeCoop)
 	actor.readyCoop(t)
-	require.Equal(t, LobbyPhaseStarting, actor.shift.LobbyPhase())
+	require.Equal(t, game.PhaseStarting, actor.shift.Phase())
 
 	step := 50 * time.Millisecond
 	var seen []any
@@ -74,7 +74,7 @@ func TestActor_CountdownByTicks(t *testing.T) {
 			}
 		}
 	}
-	assert.Equal(t, []any{2, 1, LobbyPhaseShift}, seen)
+	assert.Equal(t, []any{2, 1, game.PhaseBriefing}, seen)
 }
 
 // BR-4.5: снятие готовности в отсчёте возвращает лобби; такты больше ничего не шлют.
@@ -87,7 +87,7 @@ func TestActor_UnreadyCancelsCountdown(t *testing.T) {
 	drain(actor.hostSock)
 
 	actor.command(guestConn, game.SetReady{Ready: false}, "set_ready")
-	assert.Equal(t, LobbyPhaseLobby, actor.shift.LobbyPhase())
+	assert.Equal(t, game.PhaseLobby, actor.shift.Phase())
 	drain(actor.hostSock)
 
 	actor.tick(time.Minute)
@@ -100,7 +100,7 @@ func TestActor_SoloShiftOnReady(t *testing.T) {
 
 	actor := newTestActor(t, game.ModeSolo)
 	actor.command(actor.hostConn, game.SetReady{Ready: true}, "set_ready")
-	assert.Equal(t, LobbyPhaseShift, actor.shift.LobbyPhase())
+	assert.Equal(t, game.PhaseBriefing, actor.shift.Phase())
 }
 
 // Shift окончательный: обрыв и возврат игрока не запускают отсчёт снова.
@@ -110,11 +110,11 @@ func TestActor_ShiftIsFinal(t *testing.T) {
 	actor := newTestActor(t, game.ModeCoop)
 	actor.readyCoop(t)
 	actor.tick(3 * time.Second)
-	require.Equal(t, LobbyPhaseShift, actor.shift.LobbyPhase())
+	require.Equal(t, game.PhaseBriefing, actor.shift.Phase())
 
 	actor.disconnect(actor.hostConn, false)
 	actor.mustConnect(t, actor.tokens[game.PostWest], newFakeSocket())
-	assert.Equal(t, LobbyPhaseShift, actor.shift.LobbyPhase())
+	assert.Equal(t, game.PhaseBriefing, actor.shift.Phase())
 }
 
 // Команда паникует - Channel пишет error, закрывает сокет отправителя (1011),

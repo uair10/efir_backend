@@ -280,12 +280,12 @@ func TestLobby_Countdown(t *testing.T) {
 
 		send(p.hostConn, game.SetReady{Ready: true})
 		l := lastLobby(t, p.guestSock)
-		assert.Equal(t, LobbyPhaseLobby, l.Phase, "готов один - отсчёта нет")
+		assert.Equal(t, game.PhaseLobby, l.Phase, "готов один - отсчёта нет")
 		assert.Nil(t, l.Countdown)
 
 		send(p.guestConn, game.SetReady{Ready: true})
 		l = lastLobby(t, p.hostSock)
-		assert.Equal(t, LobbyPhaseStarting, l.Phase)
+		assert.Equal(t, game.PhaseStarting, l.Phase)
 		assert.Equal(t, new(3), l.Countdown)
 		drain(p.guestSock)
 
@@ -295,7 +295,7 @@ func TestLobby_Countdown(t *testing.T) {
 		for _, sock := range []*fakeSocket{p.hostSock, p.guestSock} {
 			ls := lobbies(t, drain(sock))
 			require.Len(t, ls, 1)
-			assert.Equal(t, LobbyPhaseStarting, ls[0].Phase)
+			assert.Equal(t, game.PhaseStarting, ls[0].Phase)
 			assert.Equal(t, new(2), ls[0].Countdown)
 		}
 
@@ -309,7 +309,7 @@ func TestLobby_Countdown(t *testing.T) {
 		for _, sock := range []*fakeSocket{p.hostSock, p.guestSock} {
 			ls := lobbies(t, drain(sock))
 			require.Len(t, ls, 1)
-			assert.Equal(t, LobbyPhaseShift, ls[0].Phase)
+			assert.Equal(t, game.PhaseBriefing, ls[0].Phase)
 			assert.Nil(t, ls[0].Countdown)
 		}
 
@@ -334,7 +334,7 @@ func TestLobby_CountdownCancelledByUnready(t *testing.T) {
 		send(p.guestConn, game.SetReady{Ready: false})
 		for _, sock := range []*fakeSocket{p.hostSock, p.guestSock} {
 			l := lastLobby(t, sock)
-			assert.Equal(t, LobbyPhaseLobby, l.Phase)
+			assert.Equal(t, game.PhaseLobby, l.Phase)
 			assert.Nil(t, l.Countdown)
 		}
 
@@ -343,7 +343,7 @@ func TestLobby_CountdownCancelledByUnready(t *testing.T) {
 
 		send(p.guestConn, game.SetReady{Ready: true})
 		l := lastLobby(t, p.hostSock)
-		assert.Equal(t, LobbyPhaseStarting, l.Phase)
+		assert.Equal(t, game.PhaseStarting, l.Phase)
 		assert.Equal(t, new(3), l.Countdown, "отсчёт заново, а не с места остановки")
 	})
 }
@@ -361,7 +361,7 @@ func TestLobby_CountdownCancelledByDisconnect(t *testing.T) {
 		p.guestConn.Disconnect()
 		synctest.Wait()
 		l := lastLobby(t, p.hostSock)
-		assert.Equal(t, LobbyPhaseLobby, l.Phase)
+		assert.Equal(t, game.PhaseLobby, l.Phase)
 		assert.Nil(t, l.Countdown)
 		assert.True(t, l.Players[game.PostEast].Ready, "готовность за гостем остаётся")
 
@@ -385,7 +385,7 @@ func TestLobby_SoloStartsImmediately(t *testing.T) {
 		send(conn, game.SetReady{Ready: true})
 		ls := lobbies(t, drain(sock))
 		require.Len(t, ls, 1)
-		assert.Equal(t, LobbyPhaseShift, ls[0].Phase, "starting в одиночной смене не бывает")
+		assert.Equal(t, game.PhaseBriefing, ls[0].Phase, "starting в одиночной смене не бывает")
 		assert.Nil(t, ls[0].Countdown)
 
 		advance(10 * time.Second)
@@ -403,7 +403,7 @@ func TestLobby_ShiftIsFinal(t *testing.T) {
 		p := newLobbyPair(t, r)
 		p.readyBoth()
 		advance(4 * time.Second)
-		require.Equal(t, LobbyPhaseShift, lastLobby(t, p.hostSock).Phase)
+		require.Equal(t, game.PhaseBriefing, lastLobby(t, p.hostSock).Phase)
 		drain(p.guestSock)
 
 		// Обрыв и возврат гостя посреди смены.
@@ -411,7 +411,7 @@ func TestLobby_ShiftIsFinal(t *testing.T) {
 		sock := newFakeSocket()
 		mustConnect(t, p.ch, p.guest, sock)
 		l := nextLobby(t, sock).Lobby
-		assert.Equal(t, LobbyPhaseShift, l.Phase, "переподключение не перезапускает отсчёт")
+		assert.Equal(t, game.PhaseBriefing, l.Phase, "переподключение не перезапускает отсчёт")
 		assert.Nil(t, l.Countdown)
 		drain(p.hostSock)
 
