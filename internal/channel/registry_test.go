@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/uair10/efir_backend/internal/game"
 )
 
 const testMaxChannels = 500
@@ -69,7 +71,7 @@ func repeat(code string, n int) []string {
 func TestRegistry_Create(t *testing.T) {
 	t.Parallel()
 
-	for _, mode := range []GameMode{GameModeCoop, GameModeSolo} {
+	for _, mode := range []game.Mode{game.ModeCoop, game.ModeSolo} {
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 
@@ -86,7 +88,7 @@ func TestRegistry_Create(t *testing.T) {
 
 			post, ok := ch.PostOf(tok)
 			require.True(t, ok)
-			assert.Equal(t, PostWest, post)
+			assert.Equal(t, game.PostWest, post)
 
 			assert.Equal(t, 1, r.Len())
 		})
@@ -99,7 +101,7 @@ func TestRegistry_ByCode_ThenJoin(t *testing.T) {
 
 	r := NewRegistry(testMaxChannels)
 
-	ch, _, err := r.Create(t.Context(), GameModeCoop)
+	ch, _, err := r.Create(t.Context(), game.ModeCoop)
 	require.NoError(t, err)
 
 	found, err := r.ByCode(ch.Code())
@@ -111,7 +113,7 @@ func TestRegistry_ByCode_ThenJoin(t *testing.T) {
 
 	post, ok := ch.PostOf(tok)
 	require.True(t, ok)
-	assert.Equal(t, PostEast, post)
+	assert.Equal(t, game.PostEast, post)
 }
 
 // BR-1.5, BR-2.2: нет канала с таким кодом (в том числе с ведущим нулём -
@@ -121,7 +123,7 @@ func TestRegistry_ByCode_Unknown(t *testing.T) {
 
 	r := NewRegistry(testMaxChannels, WithCodeGenerator(newCodeSeq(t, "111111").next))
 
-	_, _, err := r.Create(t.Context(), GameModeCoop)
+	_, _, err := r.Create(t.Context(), game.ModeCoop)
 	require.NoError(t, err)
 
 	for _, code := range []string{"222222", "011111"} {
@@ -138,7 +140,7 @@ func TestRegistry_Lookup_Solo(t *testing.T) {
 
 	r := NewRegistry(testMaxChannels)
 
-	ch, _, err := r.Create(t.Context(), GameModeSolo)
+	ch, _, err := r.Create(t.Context(), game.ModeSolo)
 	require.NoError(t, err)
 
 	byCode, err := r.ByCode(ch.Code())
@@ -156,7 +158,7 @@ func TestRegistry_Lookup(t *testing.T) {
 
 	r := NewRegistry(testMaxChannels)
 
-	ch, _, err := r.Create(t.Context(), GameModeCoop)
+	ch, _, err := r.Create(t.Context(), game.ModeCoop)
 	require.NoError(t, err)
 
 	byCode, err := r.ByCode(ch.Code())
@@ -188,12 +190,12 @@ func TestRegistry_TooManyChannels(t *testing.T) {
 
 	r := NewRegistry(2)
 
-	first, _, err := r.Create(t.Context(), GameModeCoop)
+	first, _, err := r.Create(t.Context(), game.ModeCoop)
 	require.NoError(t, err)
-	_, _, err = r.Create(t.Context(), GameModeSolo)
+	_, _, err = r.Create(t.Context(), game.ModeSolo)
 	require.NoError(t, err)
 
-	ch, tok, err := r.Create(t.Context(), GameModeCoop)
+	ch, tok, err := r.Create(t.Context(), game.ModeCoop)
 	require.ErrorIs(t, err, ErrTooManyChannels)
 	assert.Nil(t, ch)
 	assert.True(t, tok.IsEmpty())
@@ -202,7 +204,7 @@ func TestRegistry_TooManyChannels(t *testing.T) {
 	r.Remove(first.ID())
 	assert.Equal(t, 1, r.Len())
 
-	_, _, err = r.Create(t.Context(), GameModeCoop)
+	_, _, err = r.Create(t.Context(), game.ModeCoop)
 	require.NoError(t, err, "после удаления место освободилось")
 }
 
@@ -213,10 +215,10 @@ func TestRegistry_TooManyChannels_NoCodeGenerated(t *testing.T) {
 	gen := newCodeSeq(t, "111111", "222222")
 	r := NewRegistry(1, WithCodeGenerator(gen.next))
 
-	_, _, err := r.Create(t.Context(), GameModeCoop)
+	_, _, err := r.Create(t.Context(), game.ModeCoop)
 	require.NoError(t, err)
 
-	_, _, err = r.Create(t.Context(), GameModeCoop)
+	_, _, err = r.Create(t.Context(), game.ModeCoop)
 	require.ErrorIs(t, err, ErrTooManyChannels)
 	assert.Equal(t, 1, gen.Calls())
 }
@@ -231,10 +233,10 @@ func TestRegistry_Create_CodeCollision_9(t *testing.T) {
 	gen := newCodeSeq(t, codes...)
 	r := NewRegistry(testMaxChannels, WithCodeGenerator(gen.next))
 
-	_, _, err := r.Create(t.Context(), GameModeCoop)
+	_, _, err := r.Create(t.Context(), game.ModeCoop)
 	require.NoError(t, err)
 
-	ch, _, err := r.Create(t.Context(), GameModeCoop)
+	ch, _, err := r.Create(t.Context(), game.ModeCoop)
 	require.NoError(t, err)
 	assert.Equal(t, "222222", ch.Code().String())
 	assert.Equal(t, 1+10, gen.Calls())
@@ -250,10 +252,10 @@ func TestRegistry_Create_CodeCollision_10(t *testing.T) {
 	gen := newCodeSeq(t, codes...)
 	r := NewRegistry(testMaxChannels, WithCodeGenerator(gen.next))
 
-	_, _, err := r.Create(t.Context(), GameModeCoop)
+	_, _, err := r.Create(t.Context(), game.ModeCoop)
 	require.NoError(t, err)
 
-	ch, tok, err := r.Create(t.Context(), GameModeCoop)
+	ch, tok, err := r.Create(t.Context(), game.ModeCoop)
 	require.ErrorIs(t, err, ErrCodeCollision)
 	require.NotErrorIs(t, err, ErrTooManyChannels)
 	assert.Nil(t, ch)
@@ -268,7 +270,7 @@ func TestRegistry_Create_GeneratorError(t *testing.T) {
 
 	r := NewRegistry(testMaxChannels, WithCodeGenerator(newCodeSeq(t).next))
 
-	ch, tok, err := r.Create(t.Context(), GameModeCoop)
+	ch, tok, err := r.Create(t.Context(), game.ModeCoop)
 	require.Error(t, err)
 	assert.Nil(t, ch)
 	assert.True(t, tok.IsEmpty())
@@ -281,11 +283,11 @@ func TestRegistry_Create_CodeReusedAfterRemove(t *testing.T) {
 
 	r := NewRegistry(testMaxChannels, WithCodeGenerator(newCodeSeq(t, "111111", "111111").next))
 
-	first, _, err := r.Create(t.Context(), GameModeCoop)
+	first, _, err := r.Create(t.Context(), game.ModeCoop)
 	require.NoError(t, err)
 	r.Remove(first.ID())
 
-	second, _, err := r.Create(t.Context(), GameModeCoop)
+	second, _, err := r.Create(t.Context(), game.ModeCoop)
 	require.NoError(t, err)
 	assert.Equal(t, "111111", second.Code().String())
 	assert.NotEqual(t, first.ID(), second.ID())
@@ -298,10 +300,10 @@ func TestRegistry_Create_SoloOccupiesCode(t *testing.T) {
 	gen := newCodeSeq(t, "111111", "111111", "222222")
 	r := NewRegistry(testMaxChannels, WithCodeGenerator(gen.next))
 
-	_, _, err := r.Create(t.Context(), GameModeSolo)
+	_, _, err := r.Create(t.Context(), game.ModeSolo)
 	require.NoError(t, err)
 
-	ch, _, err := r.Create(t.Context(), GameModeCoop)
+	ch, _, err := r.Create(t.Context(), game.ModeCoop)
 	require.NoError(t, err)
 	assert.Equal(t, "222222", ch.Code().String())
 }
@@ -315,7 +317,7 @@ func TestRegistry_ChannelID(t *testing.T) {
 
 	ids := make(map[string]struct{})
 	for range 100 {
-		ch, _, err := r.Create(t.Context(), GameModeCoop)
+		ch, _, err := r.Create(t.Context(), game.ModeCoop)
 		require.NoError(t, err)
 
 		id := ch.ID()
@@ -342,9 +344,9 @@ func TestRegistry_Create_Concurrent(t *testing.T) {
 		ids   = make(map[string]struct{}, n)
 	)
 	for i := range n {
-		mode := GameModeCoop
+		mode := game.ModeCoop
 		if i%2 == 0 {
-			mode = GameModeSolo
+			mode = game.ModeSolo
 		}
 		wg.Go(func() {
 			ch, _, err := r.Create(t.Context(), mode)
@@ -384,7 +386,7 @@ func TestRegistry_Create_ConcurrentLimit(t *testing.T) {
 	)
 	for range n {
 		wg.Go(func() {
-			_, _, err := r.Create(t.Context(), GameModeCoop)
+			_, _, err := r.Create(t.Context(), game.ModeCoop)
 
 			mu.Lock()
 			defer mu.Unlock()
@@ -416,7 +418,7 @@ func TestRegistry_CreateRemove_Concurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	for range n {
 		wg.Go(func() {
-			ch, _, err := r.Create(t.Context(), GameModeCoop)
+			ch, _, err := r.Create(t.Context(), game.ModeCoop)
 			if err != nil {
 				t.Errorf("create: %v", err) // require.NoError нельзя вне главной горутины
 				return

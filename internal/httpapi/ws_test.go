@@ -31,6 +31,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/uair10/efir_backend/internal/game"
+
 	"github.com/uair10/efir_backend/internal/channel"
 	"github.com/uair10/efir_backend/internal/infrastructure/config"
 	"github.com/uair10/efir_backend/internal/ws"
@@ -92,7 +94,7 @@ func newWSEnv(t *testing.T) *wsEnv {
 	return &wsEnv{handler: h, baseURL: "ws" + strings.TrimPrefix(srv.URL, "http"), reg: reg, logs: logs}
 }
 
-func (e *wsEnv) create(t *testing.T, mode channel.GameMode) channelResp {
+func (e *wsEnv) create(t *testing.T, mode game.Mode) channelResp {
 	t.Helper()
 	return mustCreate(t, e.handler, mode)
 }
@@ -170,7 +172,7 @@ func waitLobby(t *testing.T, c *websocket.Conn, cond func(channel.LobbyState) bo
 }
 
 func eastConnected(l channel.LobbyState) bool {
-	return l.Players[channel.PostEast] != nil && l.Players[channel.PostEast].Connected
+	return l.Players[game.PostEast] != nil && l.Players[game.PostEast].Connected
 }
 
 // expectClose читает до закрытия и возвращает код.
@@ -242,8 +244,8 @@ func TestWS_UpgradeRejected(t *testing.T) {
 	t.Parallel()
 
 	e := newWSEnv(t)
-	host := e.create(t, channel.GameModeCoop)
-	other := e.create(t, channel.GameModeCoop)
+	host := e.create(t, game.ModeCoop)
+	other := e.create(t, game.ModeCoop)
 	missingID := "c_AAAAAAAAAAAAAAAAAAAAAA"
 
 	tests := []struct {
@@ -285,7 +287,7 @@ func TestWS_OriginAllowed(t *testing.T) {
 		t.Run("origin="+origin, func(t *testing.T) {
 			t.Parallel()
 
-			host := e.create(t, channel.GameModeSolo)
+			host := e.create(t, game.ModeSolo)
 			ctx, cancel := context.WithTimeout(t.Context(), wsWait)
 			defer cancel()
 			h := http.Header{}
@@ -306,7 +308,7 @@ func TestWS_ConnectGetsLobby(t *testing.T) {
 	t.Parallel()
 
 	e := newWSEnv(t)
-	host := e.create(t, channel.GameModeCoop)
+	host := e.create(t, game.ModeCoop)
 	c := e.dial(t, host)
 
 	want := `{"type":"lobby","lobby":{
@@ -323,7 +325,7 @@ func TestWS_SoloLobby(t *testing.T) {
 	t.Parallel()
 
 	e := newWSEnv(t)
-	host := e.create(t, channel.GameModeSolo)
+	host := e.create(t, game.ModeSolo)
 	c := e.dial(t, host)
 
 	want := `{"type":"lobby","lobby":{
@@ -340,7 +342,7 @@ func TestWS_GuestConnectBroadcast(t *testing.T) {
 	t.Parallel()
 
 	e := newWSEnv(t)
-	host := e.create(t, channel.GameModeCoop)
+	host := e.create(t, game.ModeCoop)
 	hc := e.dial(t, host)
 	readLobby(t, hc)
 
@@ -348,12 +350,12 @@ func TestWS_GuestConnectBroadcast(t *testing.T) {
 	gc := e.dial(t, guest)
 
 	gl := readLobby(t, gc)
-	assert.Equal(t, channel.PostEast, gl.You)
-	assert.Equal(t, &channel.LobbyPlayer{Callsign: channel.CallsignFirst, Connected: true}, gl.Players[channel.PostWest])
-	assert.Equal(t, &channel.LobbyPlayer{Callsign: channel.CallsignSecond, Connected: true}, gl.Players[channel.PostEast])
+	assert.Equal(t, game.PostEast, gl.You)
+	assert.Equal(t, &channel.LobbyPlayer{Callsign: channel.CallsignFirst, Connected: true}, gl.Players[game.PostWest])
+	assert.Equal(t, &channel.LobbyPlayer{Callsign: channel.CallsignSecond, Connected: true}, gl.Players[game.PostEast])
 
 	hl := waitLobby(t, hc, eastConnected)
-	assert.Equal(t, channel.PostWest, hl.You)
+	assert.Equal(t, game.PostWest, hl.You)
 }
 
 // BR-3.2: второе подключение с тем же токеном закрывает первое кодом 4001,
@@ -362,20 +364,20 @@ func TestWS_ReconnectReplacesOld(t *testing.T) {
 	t.Parallel()
 
 	e := newWSEnv(t)
-	host := e.create(t, channel.GameModeCoop)
+	host := e.create(t, game.ModeCoop)
 
 	first := e.dial(t, host)
 	readLobby(t, first)
 
 	second := e.dial(t, host)
-	assert.Equal(t, channel.PostWest, readLobby(t, second).You)
+	assert.Equal(t, game.PostWest, readLobby(t, second).You)
 	assert.Equal(t, ws.StatusReplaced, expectClose(t, first))
 
 	// Закрытие старого сокета не выбило хозяина: гость видит его на связи,
 	// а новое соединение получает рассылку.
 	guest := e.join(t, host.Code)
 	gl := readLobby(t, e.dial(t, guest))
-	assert.True(t, gl.Players[channel.PostWest].Connected, "старый сокет отключил хозяина")
+	assert.True(t, gl.Players[game.PostWest].Connected, "старый сокет отключил хозяина")
 	waitLobby(t, second, eastConnected)
 }
 
@@ -385,7 +387,7 @@ func TestWS_MaxMessage(t *testing.T) {
 	t.Parallel()
 
 	e := newWSEnv(t)
-	host := e.create(t, channel.GameModeCoop)
+	host := e.create(t, game.ModeCoop)
 	c := e.dial(t, host)
 	readLobby(t, c)
 
@@ -408,7 +410,7 @@ func TestWS_GarbageIgnored(t *testing.T) {
 	t.Parallel()
 
 	e := newWSEnv(t)
-	host := e.create(t, channel.GameModeCoop)
+	host := e.create(t, game.ModeCoop)
 	c := e.dial(t, host)
 	readLobby(t, c)
 
@@ -448,7 +450,7 @@ func TestWS_ServerTimeoutsDoNotKillSocket(t *testing.T) {
 	})
 	base := "ws://" + ln.Addr().String()
 
-	host := mustCreate(t, h, channel.GameModeCoop)
+	host := mustCreate(t, h, game.ModeCoop)
 	c := dialURL(t, base+wsPath(host.ChannelID, host.Token))
 	readLobby(t, c)
 
@@ -468,7 +470,7 @@ func TestWS_TokenNotLogged(t *testing.T) {
 	t.Parallel()
 
 	e := newWSEnv(t)
-	host := e.create(t, channel.GameModeCoop)
+	host := e.create(t, game.ModeCoop)
 	guest := e.join(t, host.Code)
 
 	hc := e.dial(t, host)
@@ -504,7 +506,7 @@ func TestWS_LogKeysNotDuplicated(t *testing.T) {
 	t.Parallel()
 
 	e := newWSEnv(t)
-	host := e.create(t, channel.GameModeCoop)
+	host := e.create(t, game.ModeCoop)
 	c := e.dial(t, host)
 	readLobby(t, c)
 	writeText(t, c, `{"type":"unknown"}`) // debug "message ignored" от Connection
@@ -528,7 +530,7 @@ func TestWS_RegistryCloseSendsGoingAway(t *testing.T) {
 	t.Parallel()
 
 	e := newWSEnv(t)
-	host := e.create(t, channel.GameModeCoop)
+	host := e.create(t, game.ModeCoop)
 	guest := e.join(t, host.Code)
 	hc := e.dial(t, host)
 	readLobby(t, hc)
@@ -547,7 +549,7 @@ func TestWS_RemoveSendsNormalClosure(t *testing.T) {
 	t.Parallel()
 
 	e := newWSEnv(t)
-	host := e.create(t, channel.GameModeSolo)
+	host := e.create(t, game.ModeSolo)
 	c := e.dial(t, host)
 	readLobby(t, c)
 
@@ -563,7 +565,7 @@ func TestWS_AbruptDisconnectAndReconnect(t *testing.T) {
 	t.Parallel()
 
 	e := newWSEnv(t)
-	host := e.create(t, channel.GameModeCoop)
+	host := e.create(t, game.ModeCoop)
 	guest := e.join(t, host.Code)
 	hc := e.dial(t, host)
 	readLobby(t, hc)
@@ -572,7 +574,7 @@ func TestWS_AbruptDisconnectAndReconnect(t *testing.T) {
 
 	require.NoError(t, gc.CloseNow())
 
-	offline := readLobby(t, hc).Players[channel.PostEast]
+	offline := readLobby(t, hc).Players[game.PostEast]
 	require.NotNil(t, offline)
 	assert.False(t, offline.Connected)
 
@@ -586,7 +588,7 @@ func TestWS_GracefulGuestDisconnectFreesPost(t *testing.T) {
 	t.Parallel()
 
 	e := newWSEnv(t)
-	host := e.create(t, channel.GameModeCoop)
+	host := e.create(t, game.ModeCoop)
 	guest := e.join(t, host.Code)
 	hc := e.dial(t, host)
 	readLobby(t, hc)
@@ -595,7 +597,7 @@ func TestWS_GracefulGuestDisconnectFreesPost(t *testing.T) {
 
 	require.NoError(t, gc.Close(websocket.StatusNormalClosure, "bye"))
 
-	require.Nil(t, readLobby(t, hc).Players[channel.PostEast])
+	require.Nil(t, readLobby(t, hc).Players[game.PostEast])
 	rec := doRequest(e.handler, upgradeRequest(t, wsPath(guest.ChannelID, guest.Token), allowedOrigin))
 	checkError(t, rec, http.StatusUnauthorized)
 	e.join(t, host.Code)
@@ -606,7 +608,7 @@ func TestWS_GracefulHostDisconnectClosesChannel(t *testing.T) {
 	t.Parallel()
 
 	e := newWSEnv(t)
-	host := e.create(t, channel.GameModeCoop)
+	host := e.create(t, game.ModeCoop)
 	guest := e.join(t, host.Code)
 	hc := e.dial(t, host)
 	readLobby(t, hc)
@@ -629,15 +631,15 @@ func TestWS_GracefulHostDisconnectClosesChannel(t *testing.T) {
 func TestWS_WildcardOrigin(t *testing.T) {
 	t.Parallel()
 
-	game := testGameConfig()
-	game.WSAllowedOrigins = []string{"*"}
+	gameCfg := testGameConfig()
+	gameCfg.WSAllowedOrigins = []string{"*"}
 	reg := channel.NewRegistry(10)
-	h := newHandler(slog.New(slog.DiscardHandler), testConfig(), reg, WithGame(game))
+	h := newHandler(slog.New(slog.DiscardHandler), testConfig(), reg, WithGame(gameCfg))
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	t.Cleanup(reg.Close)
 
-	host := mustCreate(t, h, channel.GameModeSolo)
+	host := mustCreate(t, h, game.ModeSolo)
 	ctx, cancel := context.WithTimeout(t.Context(), wsWait)
 	defer cancel()
 	c, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+wsPath(host.ChannelID, host.Token), //nolint:bodyclose // тело закрывает websocket.Dial при успехе
@@ -671,7 +673,7 @@ func TestServer_WaitWebSockets(t *testing.T) {
 	go func() { _ = srv.Serve(ln) }()
 
 	h := newHandler(slog.New(slog.DiscardHandler), testConfig(), reg, WithGame(testGameConfig()))
-	host := mustCreate(t, h, channel.GameModeSolo)
+	host := mustCreate(t, h, game.ModeSolo)
 	c := dialURL(t, "ws://"+ln.Addr().String()+wsPath(host.ChannelID, host.Token))
 	readLobby(t, c)
 
@@ -686,4 +688,36 @@ func TestServer_WaitWebSockets(t *testing.T) {
 	reg.Close()
 	assert.Equal(t, websocket.StatusGoingAway, expectClose(t, c))
 	require.NoError(t, srv.WaitWebSockets(ctx))
+}
+
+// BR-5.2: переподключение в смене выдаёт лобби и снимок инструктажа.
+func TestWS_ReconnectGetsBriefingSnapshot(t *testing.T) {
+	t.Parallel()
+
+	e := newWSEnv(t)
+	host := e.create(t, game.ModeSolo)
+	first := e.dial(t, host)
+	readLobby(t, first)
+
+	writeText(t, first, `{"type":"command","command":{"kind":"complete_briefing"}}`)
+	writeText(t, first, `{"type":"set_ready","ready":true}`)
+	require.Equal(t, channel.LobbyPhaseShift, readLobby(t, first).Phase)
+	require.NoError(t, first.CloseNow())
+
+	reconnected := e.dial(t, host)
+	require.Equal(t, channel.LobbyPhaseShift, readLobby(t, reconnected).Phase)
+	type briefingSnapshot struct {
+		Phase  game.Phase `json:"phase"`
+		Energy int        `json:"energy"`
+		Vision string     `json:"vision"`
+	}
+	var message struct {
+		Type     string           `json:"type"`
+		Snapshot briefingSnapshot `json:"snapshot"`
+	}
+	require.NoError(t, json.Unmarshal(readRaw(t, reconnected), &message))
+	assert.Equal(t, "game", message.Type)
+	assert.Equal(t, game.PhaseBriefing, message.Snapshot.Phase)
+	assert.Equal(t, game.StartEnergy[game.PostWest], message.Snapshot.Energy)
+	assert.Len(t, message.Snapshot.Vision, game.Cols*game.Rows)
 }

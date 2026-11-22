@@ -8,6 +8,8 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/uair10/efir_backend/internal/game"
+
 	"github.com/uair10/efir_backend/internal/channel"
 )
 
@@ -20,7 +22,7 @@ type channelBody struct {
 
 // createChannelBody - тело запроса на создание канала.
 type createChannelBody struct {
-	Mode channel.GameMode `json:"mode" enum:"solo,coop" doc:"Режим: solo или coop"`
+	Mode game.Mode `json:"mode" enum:"solo,coop" doc:"Режим: solo или coop"`
 }
 
 // CreateChannelInput - запрос POST /api/channels.

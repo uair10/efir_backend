@@ -21,6 +21,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/uair10/efir_backend/internal/game"
 )
 
 // bubbleRegistry - реестр внутри пузыря synctest. Cleanup пузыря закрывает
@@ -133,12 +135,12 @@ func TestLobby_EveryChangeBroadcastsToBoth(t *testing.T) {
 			gl := lobbies(t, drain(p.guestSock))
 			require.Len(t, hl, 1, "хозяин: одно лобби на изменение (%s)", cmd)
 			require.Len(t, gl, 1, "гость: одно лобби на изменение (%s)", cmd)
-			assert.Equal(t, PostWest, hl[0].You)
-			assert.Equal(t, PostEast, gl[0].You)
+			assert.Equal(t, game.PostWest, hl[0].You)
+			assert.Equal(t, game.PostEast, gl[0].You)
 			assert.Equal(t, hl[0].Players, gl[0].Players, "посты оба видят одинаково")
 		}
 
-		guest, ok := p.ch.Player(PostEast)
+		guest, ok := p.ch.Player(game.PostEast)
 		require.True(t, ok)
 		assert.Equal(t, Callsign("Сокол"), guest.Callsign)
 	})
@@ -187,7 +189,7 @@ func TestLobby_SetCallsign_OwnIsNotTaken(t *testing.T) {
 
 		send(p.hostConn, `{"type":"set_callsign","callsign":"Первый"}`)
 
-		assert.Equal(t, CallsignFirst, lastLobby(t, p.hostSock).Players[PostWest].Callsign)
+		assert.Equal(t, CallsignFirst, lastLobby(t, p.hostSock).Players[game.PostWest].Callsign)
 	})
 }
 
@@ -197,7 +199,7 @@ func TestLobby_SetCallsign_BotsCallsignTaken(t *testing.T) {
 
 	synctest.Test(t, func(t *testing.T) {
 		r := bubbleRegistry(t)
-		ch, host, err := r.Create(t.Context(), GameModeSolo)
+		ch, host, err := r.Create(t.Context(), game.ModeSolo)
 		require.NoError(t, err)
 		sock := newFakeSocket()
 		conn := mustConnect(t, ch, host, sock)
@@ -224,7 +226,7 @@ func TestLobby_SetCallsign_LockedWhileReady(t *testing.T) {
 		send(p.hostConn, `{"type":"set_ready","ready":false}`)
 		drain(p.hostSock)
 		send(p.hostConn, `{"type":"set_callsign","callsign":"Заря"}`)
-		assert.Equal(t, Callsign("Заря"), lastLobby(t, p.hostSock).Players[PostWest].Callsign)
+		assert.Equal(t, Callsign("Заря"), lastLobby(t, p.hostSock).Players[game.PostWest].Callsign)
 	})
 }
 
@@ -234,7 +236,7 @@ func TestLobby_SetReady_PartnerMissing(t *testing.T) {
 
 	synctest.Test(t, func(t *testing.T) {
 		r := bubbleRegistry(t)
-		ch, host, err := r.Create(t.Context(), GameModeCoop)
+		ch, host, err := r.Create(t.Context(), game.ModeCoop)
 		require.NoError(t, err)
 		sock := newFakeSocket()
 		conn := mustConnect(t, ch, host, sock)
@@ -245,14 +247,14 @@ func TestLobby_SetReady_PartnerMissing(t *testing.T) {
 
 		// "Не готов" в одиночестве - не ошибка.
 		send(conn, `{"type":"set_ready","ready":false}`)
-		assert.False(t, lastLobby(t, sock).Players[PostWest].Ready)
+		assert.False(t, lastLobby(t, sock).Players[game.PostWest].Ready)
 
 		// Гость пришёл - теперь можно.
 		_, err = ch.Join(t.Context())
 		require.NoError(t, err)
 		drain(sock)
 		send(conn, `{"type":"set_ready","ready":true}`)
-		assert.True(t, lastLobby(t, sock).Players[PostWest].Ready)
+		assert.True(t, lastLobby(t, sock).Players[game.PostWest].Ready)
 	})
 }
 
@@ -358,7 +360,7 @@ func TestLobby_CountdownCancelledByDisconnect(t *testing.T) {
 		l := lastLobby(t, p.hostSock)
 		assert.Equal(t, LobbyPhaseLobby, l.Phase)
 		assert.Nil(t, l.Countdown)
-		assert.True(t, l.Players[PostEast].Ready, "готовность за гостем остаётся")
+		assert.True(t, l.Players[game.PostEast].Ready, "готовность за гостем остаётся")
 
 		advance(10 * time.Second)
 		assert.Empty(t, drain(p.hostSock))
@@ -371,7 +373,7 @@ func TestLobby_SoloStartsImmediately(t *testing.T) {
 
 	synctest.Test(t, func(t *testing.T) {
 		r := bubbleRegistry(t)
-		ch, host, err := r.Create(t.Context(), GameModeSolo)
+		ch, host, err := r.Create(t.Context(), game.ModeSolo)
 		require.NoError(t, err)
 		sock := newFakeSocket()
 		conn := mustConnect(t, ch, host, sock)
@@ -414,7 +416,7 @@ func TestLobby_ShiftIsFinal(t *testing.T) {
 		send(p.hostConn, `{"type":"set_callsign","callsign":"Заря"}`)
 		assert.Empty(t, drain(p.hostSock), "команды лобби в смене молча игнорируются")
 
-		host, ok := p.ch.Player(PostWest)
+		host, ok := p.ch.Player(game.PostWest)
 		require.True(t, ok)
 		assert.True(t, host.Ready)
 		assert.Equal(t, CallsignFirst, host.Callsign)
@@ -437,7 +439,7 @@ func TestLobby_ReplacedConnectionCommandsIgnored(t *testing.T) {
 		send(p.hostConn, `{"type":"set_callsign","callsign":"Заря"}`)
 		assert.Empty(t, drain(p.guestSock))
 
-		host, ok := p.ch.Player(PostWest)
+		host, ok := p.ch.Player(game.PostWest)
 		require.True(t, ok)
 		assert.Equal(t, CallsignFirst, host.Callsign)
 	})

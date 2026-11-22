@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/uair10/efir_backend/internal/game"
 	"github.com/uair10/efir_backend/internal/infrastructure/logging"
 )
 
@@ -21,17 +22,17 @@ const countdownFrom = 3 * time.Second
 // звать их напрямую, время двигается через tick(dt).
 type room struct {
 	code Code
-	mode GameMode
+	mode game.Mode
 	log  *slog.Logger // логгер канала: channel_id, channel_code
 
 	west *Player
 	east *Player // nil - пост свободен
 
-	conns map[Post]*Connection
+	conns map[game.Post]*Connection
 
 	reconnectGrace time.Duration
 	lobbyIdleTTL   time.Duration
-	reconnectUntil map[Post]time.Time
+	reconnectUntil map[game.Post]time.Time
 	idleSince      time.Time
 	shiftPaused    bool
 
@@ -41,7 +42,7 @@ type room struct {
 
 // newRoom сажает хоста на west с позывным "Первый"; в одиночной смене east
 // сразу занимает бот. Возвращает токен хоста.
-func newRoom(code Code, mode GameMode, log *slog.Logger) (*room, Token, error) {
+func newRoom(code Code, mode game.Mode, log *slog.Logger) (*room, Token, error) {
 	tok, err := newToken()
 	if err != nil {
 		return nil, Token{}, err
@@ -51,14 +52,14 @@ func newRoom(code Code, mode GameMode, log *slog.Logger) (*room, Token, error) {
 		mode:           mode,
 		log:            log,
 		west:           newPlayer(CallsignFirst, tok),
-		conns:          make(map[Post]*Connection, postsPerChannel),
+		conns:          make(map[game.Post]*Connection, postsPerChannel),
 		phase:          LobbyPhaseLobby,
 		reconnectGrace: defaultReconnectGrace,
 		lobbyIdleTTL:   defaultLobbyIdleTTL,
-		reconnectUntil: make(map[Post]time.Time, postsPerChannel),
+		reconnectUntil: make(map[game.Post]time.Time, postsPerChannel),
 		idleSince:      time.Now(),
 	}
-	if mode == GameModeSolo {
+	if mode == game.ModeSolo {
 		r.east = newBot()
 	}
 	return r, tok, nil
@@ -110,7 +111,7 @@ func (r *room) join(log *slog.Logger) (Token, error) {
 		return Token{}, fmt.Errorf("channel: join: %w", err)
 	}
 	r.east = newPlayer(cs, tok)
-	log.Info("guest joined", logging.Post(PostEast), slog.String("callsign", cs.String()))
+	log.Info("guest joined", logging.Post(game.PostEast), slog.String("callsign", cs.String()))
 	r.recompute()
 	r.broadcastLobby()
 	return tok, nil
@@ -151,7 +152,7 @@ func (r *room) disconnect(conn *Connection, graceful bool) bool {
 		r.idleSince = now
 	}
 	if graceful {
-		if conn.post == PostWest {
+		if conn.post == game.PostWest {
 			return true
 		}
 		r.releasePost(conn.post)
@@ -174,11 +175,11 @@ func (r *room) expireDisconnected(now time.Time) {
 		if r.phase == LobbyPhaseShift {
 			r.playerAt(post).token = Token{}
 			r.shiftPaused = true
-			if mate := r.conns[mateOf(post)]; mate != nil {
-				mate.sock.Send(Message{Payload: shiftEventsMessage{
-					Type:   ServerMessageEvents,
-					Events: []shiftRadioEvent{{Kind: shiftEventRadio, From: radioSourceSystem, Text: "Напарник пропал из эфира"}},
-				}})
+			if mate := r.conns[game.OtherPost(post)]; mate != nil {
+				mate.sock.Send(Message{Payload: []game.Event{game.RadioEvent{
+					From: game.RadioSystem,
+					Text: "Напарник пропал из эфира",
+				}}})
 				r.sendShiftSnapshot(mate)
 			}
 			continue
@@ -193,8 +194,8 @@ func (r *room) expireDisconnected(now time.Time) {
 }
 
 // releasePost освобождает пост и аннулирует токен занимавшего его игрока.
-func (r *room) releasePost(post Post) {
-	if post == PostWest {
+func (r *room) releasePost(post game.Post) {
+	if post == game.PostWest {
 		r.west = nil
 	} else {
 		r.east = nil
@@ -238,7 +239,7 @@ func (conn *Connection) reject(cmd command, err error) {
 }
 
 // setCallsign меняет позывной.
-func (r *room) setCallsign(from Post, cs Callsign) error {
+func (r *room) setCallsign(from game.Post, cs Callsign) error {
 	if r.phase == LobbyPhaseShift {
 		return errWrongPhase
 	}
@@ -249,7 +250,7 @@ func (r *room) setCallsign(from Post, cs Callsign) error {
 	if p.Ready {
 		return ErrCallsignLocked
 	}
-	if mate := r.playerAt(mateOf(from)); mate != nil && mate.Callsign == cs {
+	if mate := r.playerAt(game.OtherPost(from)); mate != nil && mate.Callsign == cs {
 		return ErrCallsignTaken
 	}
 	p.Callsign = cs
@@ -257,11 +258,11 @@ func (r *room) setCallsign(from Post, cs Callsign) error {
 }
 
 // setReady меняет готовность.
-func (r *room) setReady(from Post, ready bool) error {
+func (r *room) setReady(from game.Post, ready bool) error {
 	if r.phase == LobbyPhaseShift {
 		return errWrongPhase
 	}
-	if ready && r.playerAt(mateOf(from)) == nil {
+	if ready && r.playerAt(game.OtherPost(from)) == nil {
 		return ErrPartnerMissing
 	}
 	r.playerAt(from).Ready = ready
@@ -299,7 +300,7 @@ func (r *room) recompute() {
 		if !r.canStart() {
 			return
 		}
-		if r.mode == GameModeSolo {
+		if r.mode == game.ModeSolo {
 			r.startShift() // без отсчёта
 			return
 		}
@@ -335,7 +336,6 @@ func (r *room) startShift() {
 	r.phase = LobbyPhaseShift
 	r.countdown = 0
 	r.log.Info("shift started")
-	// EFR-6+: здесь создаётся симуляция смены.
 }
 
 // countdownSeconds - число на табло: оставшееся время вверх до секунды.
@@ -359,8 +359,8 @@ func (r *room) broadcastLobby() {
 }
 
 // lobbyFor собирает лобби глазами поста you.
-func (r *room) lobbyFor(you Post) LobbyMessage {
-	players := make(map[Post]*LobbyPlayer, postsPerChannel)
+func (r *room) lobbyFor(you game.Post) LobbyMessage {
+	players := make(map[game.Post]*LobbyPlayer, postsPerChannel)
 	for _, post := range posts {
 		p := r.playerAt(post)
 		if p == nil {
@@ -390,11 +390,11 @@ func (r *room) lobbyFor(you Post) LobbyMessage {
 }
 
 // playerAt - игрок на посту или nil.
-func (r *room) playerAt(post Post) *Player {
+func (r *room) playerAt(post game.Post) *Player {
 	switch post {
-	case PostWest:
+	case game.PostWest:
 		return r.west
-	case PostEast:
+	case game.PostEast:
 		return r.east
 	default:
 		return nil
@@ -402,7 +402,7 @@ func (r *room) playerAt(post Post) *Player {
 }
 
 // postOf - пост владельца tok. Бот не опознаётся: пустой токен не равен никакому.
-func (r *room) postOf(tok Token) (Post, bool) {
+func (r *room) postOf(tok Token) (game.Post, bool) {
 	for _, post := range posts {
 		if p := r.playerAt(post); p != nil && p.token.Equal(tok) {
 			return post, true

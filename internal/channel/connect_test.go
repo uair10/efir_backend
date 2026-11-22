@@ -17,6 +17,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/uair10/efir_backend/internal/game"
 )
 
 // waitTimeout - сколько ждать сообщения от горутины канала.
@@ -116,7 +118,7 @@ func newTestRegistry(t *testing.T) *Registry {
 //nolint:revive // confusing-results: именованные результаты запрещает nonamedreturns
 func coopWithGuest(t *testing.T, r *Registry) (*Channel, Token, Token) {
 	t.Helper()
-	ch, host, err := r.Create(t.Context(), GameModeCoop)
+	ch, host, err := r.Create(t.Context(), game.ModeCoop)
 	require.NoError(t, err)
 	guest, err := ch.Join(t.Context())
 	require.NoError(t, err)
@@ -135,24 +137,24 @@ func TestConnect_HostGetsLobby(t *testing.T) {
 	t.Parallel()
 
 	r := newTestRegistry(t)
-	ch, host, err := r.Create(t.Context(), GameModeCoop)
+	ch, host, err := r.Create(t.Context(), game.ModeCoop)
 	require.NoError(t, err)
 
 	hostSock := newFakeSocket()
 	conn := mustConnect(t, ch, host, hostSock)
-	assert.Equal(t, PostWest, conn.Post())
+	assert.Equal(t, game.PostWest, conn.Post())
 
 	lm := nextLobby(t, hostSock).Lobby
 	assert.Equal(t, ch.Code().String(), lm.Code)
-	assert.Equal(t, GameModeCoop, lm.Mode)
+	assert.Equal(t, game.ModeCoop, lm.Mode)
 	assert.Equal(t, LobbyPhaseLobby, lm.Phase)
 	assert.Nil(t, lm.Countdown)
-	assert.Equal(t, PostWest, lm.You)
+	assert.Equal(t, game.PostWest, lm.You)
 
-	require.Contains(t, lm.Players, PostWest)
-	require.Contains(t, lm.Players, PostEast, "свободный пост - null, но ключ есть")
-	assert.Equal(t, &LobbyPlayer{Callsign: CallsignFirst, Connected: true}, lm.Players[PostWest])
-	assert.Nil(t, lm.Players[PostEast])
+	require.Contains(t, lm.Players, game.PostWest)
+	require.Contains(t, lm.Players, game.PostEast, "свободный пост - null, но ключ есть")
+	assert.Equal(t, &LobbyPlayer{Callsign: CallsignFirst, Connected: true}, lm.Players[game.PostWest])
+	assert.Nil(t, lm.Players[game.PostEast])
 }
 
 // EFR-3.d, BR-1.3: в одиночной смене east сразу занят готовым ботом.
@@ -160,16 +162,16 @@ func TestConnect_SoloLobbyHasBot(t *testing.T) {
 	t.Parallel()
 
 	r := newTestRegistry(t)
-	ch, host, err := r.Create(t.Context(), GameModeSolo)
+	ch, host, err := r.Create(t.Context(), game.ModeSolo)
 	require.NoError(t, err)
 
 	hostSock := newFakeSocket()
 	mustConnect(t, ch, host, hostSock)
 
 	lm := nextLobby(t, hostSock).Lobby
-	assert.Equal(t, GameModeSolo, lm.Mode)
-	assert.Equal(t, &LobbyPlayer{Callsign: CallsignFirst, Connected: true}, lm.Players[PostWest])
-	assert.Equal(t, &LobbyPlayer{Callsign: CallsignSecond, Ready: true, Bot: true, Connected: true}, lm.Players[PostEast])
+	assert.Equal(t, game.ModeSolo, lm.Mode)
+	assert.Equal(t, &LobbyPlayer{Callsign: CallsignFirst, Connected: true}, lm.Players[game.PostWest])
+	assert.Equal(t, &LobbyPlayer{Callsign: CallsignSecond, Ready: true, Bot: true, Connected: true}, lm.Players[game.PostEast])
 }
 
 // Раздел 3.1 контракта: LobbyMessage кодируется ровно так, как ждет фронтенд.
@@ -205,21 +207,21 @@ func TestConnect_GuestBroadcast(t *testing.T) {
 	mustConnect(t, ch, host, hostSock)
 	first := nextLobby(t, hostSock).Lobby
 	// Гость уже сидит на посту, но сокет не открыл.
-	require.NotNil(t, first.Players[PostEast])
-	assert.False(t, first.Players[PostEast].Connected)
+	require.NotNil(t, first.Players[game.PostEast])
+	assert.False(t, first.Players[game.PostEast].Connected)
 
 	guestSock := newFakeSocket()
 	guestConn := mustConnect(t, ch, guest, guestSock)
-	assert.Equal(t, PostEast, guestConn.Post())
+	assert.Equal(t, game.PostEast, guestConn.Post())
 
 	gl := nextLobby(t, guestSock).Lobby
-	assert.Equal(t, PostEast, gl.You)
-	assert.True(t, gl.Players[PostWest].Connected)
-	assert.True(t, gl.Players[PostEast].Connected)
-	assert.Equal(t, CallsignSecond, gl.Players[PostEast].Callsign)
+	assert.Equal(t, game.PostEast, gl.You)
+	assert.True(t, gl.Players[game.PostWest].Connected)
+	assert.True(t, gl.Players[game.PostEast].Connected)
+	assert.Equal(t, CallsignSecond, gl.Players[game.PostEast].Callsign)
 
-	hl := waitLobby(t, hostSock, func(l LobbyMessage) bool { return l.Lobby.Players[PostEast].Connected }).Lobby
-	assert.Equal(t, PostWest, hl.You, "у каждого свой you")
+	hl := waitLobby(t, hostSock, func(l LobbyMessage) bool { return l.Lobby.Players[game.PostEast].Connected }).Lobby
+	assert.Equal(t, game.PostWest, hl.You, "у каждого свой you")
 }
 
 // BR-3.1: чужой, пустой и ботовый токены в канал не пускают.
@@ -227,9 +229,9 @@ func TestConnect_Unauthorized(t *testing.T) {
 	t.Parallel()
 
 	r := newTestRegistry(t)
-	ch, _, err := r.Create(t.Context(), GameModeSolo)
+	ch, _, err := r.Create(t.Context(), game.ModeSolo)
 	require.NoError(t, err)
-	_, foreign, err := r.Create(t.Context(), GameModeCoop)
+	_, foreign, err := r.Create(t.Context(), game.ModeCoop)
 	require.NoError(t, err)
 
 	for name, tok := range map[string]Token{
@@ -262,10 +264,10 @@ func TestConnect_ReplacesOldConnection(t *testing.T) {
 
 	newSock := newFakeSocket()
 	newConn := mustConnect(t, ch, host, newSock)
-	assert.Equal(t, PostWest, newConn.Post())
+	assert.Equal(t, game.PostWest, newConn.Post())
 
 	assert.Equal(t, CloseReasonReplaced, waitClosed(t, oldSock))
-	assert.Equal(t, PostWest, nextLobby(t, newSock).Lobby.You)
+	assert.Equal(t, game.PostWest, nextLobby(t, newSock).Lobby.You)
 
 	// Читатель старого сокета узнает о закрытии позже и вызывает Disconnect.
 	// Это не должно выбить нового владельца поста.
@@ -274,10 +276,10 @@ func TestConnect_ReplacesOldConnection(t *testing.T) {
 	guestSock := newFakeSocket()
 	mustConnect(t, ch, guest, guestSock)
 	gl := nextLobby(t, guestSock).Lobby
-	assert.True(t, gl.Players[PostWest].Connected, "Disconnect старого подключения отключил новое")
+	assert.True(t, gl.Players[game.PostWest].Connected, "Disconnect старого подключения отключил новое")
 
 	// Новое соединение подписано, старое - нет.
-	waitLobby(t, newSock, func(l LobbyMessage) bool { return l.Lobby.Players[PostEast].Connected })
+	waitLobby(t, newSock, func(l LobbyMessage) bool { return l.Lobby.Players[game.PostEast].Connected })
 	drainNoLobby(t, oldSock)
 }
 
@@ -300,13 +302,13 @@ func TestDisconnect_PartnerSeesDisconnected(t *testing.T) {
 	mustConnect(t, ch, host, hostSock)
 	guestSock := newFakeSocket()
 	guestConn := mustConnect(t, ch, guest, guestSock)
-	waitLobby(t, hostSock, func(l LobbyMessage) bool { return l.Lobby.Players[PostEast].Connected })
+	waitLobby(t, hostSock, func(l LobbyMessage) bool { return l.Lobby.Players[game.PostEast].Connected })
 
 	guestConn.Disconnect()
 
-	hl := waitLobby(t, hostSock, func(l LobbyMessage) bool { return !l.Lobby.Players[PostEast].Connected }).Lobby
-	require.NotNil(t, hl.Players[PostEast], "пост за гостем сохраняется")
-	assert.Equal(t, CallsignSecond, hl.Players[PostEast].Callsign)
+	hl := waitLobby(t, hostSock, func(l LobbyMessage) bool { return !l.Lobby.Players[game.PostEast].Connected }).Lobby
+	require.NotNil(t, hl.Players[game.PostEast], "пост за гостем сохраняется")
+	assert.Equal(t, CallsignSecond, hl.Players[game.PostEast].Callsign)
 
 	// Повторный Disconnect того же подключения безопасен.
 	guestConn.Disconnect()
@@ -340,7 +342,7 @@ func TestReceive_GarbageIgnored(t *testing.T) {
 	guestSock := newFakeSocket()
 	mustConnect(t, ch, guest, guestSock)
 	nextLobby(t, guestSock)
-	waitLobby(t, hostSock, func(l LobbyMessage) bool { return l.Lobby.Players[PostEast].Connected })
+	waitLobby(t, hostSock, func(l LobbyMessage) bool { return l.Lobby.Players[game.PostEast].Connected })
 
 	select {
 	case r := <-hostSock.closed:
@@ -374,11 +376,11 @@ func TestReceive_SetCallsign(t *testing.T) {
 	hostSock := newFakeSocket()
 	hostConn := mustConnect(t, ch, host, hostSock)
 	mustConnect(t, ch, guest, newFakeSocket())
-	waitLobby(t, hostSock, func(l LobbyMessage) bool { return l.Lobby.Players[PostEast].Connected })
+	waitLobby(t, hostSock, func(l LobbyMessage) bool { return l.Lobby.Players[game.PostEast].Connected })
 
 	hostConn.Receive([]byte(`{"type":"set_callsign","callsign":"Сокол"}`))
 	lm := nextLobby(t, hostSock).Lobby
-	assert.Equal(t, Callsign("Сокол"), lm.Players[PostWest].Callsign)
+	assert.Equal(t, Callsign("Сокол"), lm.Players[game.PostWest].Callsign)
 
 	hostConn.Receive([]byte(`{"type":"set_callsign","callsign":"Нет такого"}`))
 	hostConn.Receive([]byte(`{"type":"set_callsign","callsign":"Второй"}`))
@@ -386,7 +388,7 @@ func TestReceive_SetCallsign(t *testing.T) {
 		nextError(t, hostSock), "неизвестный позывной молча пропущен, следом - отказ")
 
 	hostConn.Receive([]byte(`{"type":"set_ready","ready":true}`))
-	assert.True(t, nextLobby(t, hostSock).Lobby.Players[PostWest].Ready)
+	assert.True(t, nextLobby(t, hostSock).Lobby.Players[game.PostWest].Ready)
 	hostConn.Receive([]byte(`{"type":"set_callsign","callsign":"Заря"}`))
 	assert.Equal(t, ErrorCallsignLocked, nextError(t, hostSock).Code)
 }
@@ -486,7 +488,7 @@ func TestRegistryClose_NoGoroutineLeak(t *testing.T) {
 		mustConnect(t, ch, host, newFakeSocket())
 		mustConnect(t, ch, guest, newFakeSocket())
 	}
-	_, _, err := r.Create(t.Context(), GameModeSolo)
+	_, _, err := r.Create(t.Context(), game.ModeSolo)
 	require.NoError(t, err)
 	require.Greater(t, runtime.NumGoroutine(), base, "у каналов должны быть свои горутины")
 
@@ -557,7 +559,7 @@ func TestConnect_ConcurrentWithJoin(t *testing.T) {
 
 	r := newTestRegistry(t)
 	for range 20 {
-		ch, host, err := r.Create(t.Context(), GameModeCoop)
+		ch, host, err := r.Create(t.Context(), game.ModeCoop)
 		require.NoError(t, err)
 
 		hostSock := newFakeSocket()
@@ -576,10 +578,10 @@ func TestConnect_ConcurrentWithJoin(t *testing.T) {
 
 		post, ok := ch.PostOf(guest)
 		require.True(t, ok)
-		assert.Equal(t, PostEast, post)
+		assert.Equal(t, game.PostEast, post)
 		mustConnect(t, ch, guest, newFakeSocket())
 		waitLobby(t, hostSock, func(lm LobbyMessage) bool {
-			east := lm.Lobby.Players[PostEast]
+			east := lm.Lobby.Players[game.PostEast]
 			return east != nil && east.Connected
 		})
 	}
@@ -610,7 +612,7 @@ func TestRegistry_CreateAfterClose(t *testing.T) {
 	r := NewRegistry(testMaxChannels)
 	r.Close()
 
-	_, _, err := r.Create(t.Context(), GameModeCoop)
+	_, _, err := r.Create(t.Context(), game.ModeCoop)
 	require.ErrorIs(t, err, ErrRegistryClosed)
 	assert.Equal(t, 0, r.Len())
 }
@@ -621,21 +623,21 @@ func TestJoin_BroadcastsLobby(t *testing.T) {
 	t.Parallel()
 
 	r := newTestRegistry(t)
-	ch, host, err := r.Create(t.Context(), GameModeCoop)
+	ch, host, err := r.Create(t.Context(), game.ModeCoop)
 	require.NoError(t, err)
 
 	hostSock := newFakeSocket()
 	mustConnect(t, ch, host, hostSock)
-	require.Nil(t, nextLobby(t, hostSock).Lobby.Players[PostEast], "гостя ещё нет")
+	require.Nil(t, nextLobby(t, hostSock).Lobby.Players[game.PostEast], "гостя ещё нет")
 
 	_, err = ch.Join(t.Context())
 	require.NoError(t, err)
 
 	lm := nextLobby(t, hostSock).Lobby
-	require.NotNil(t, lm.Players[PostEast])
-	assert.Equal(t, CallsignSecond, lm.Players[PostEast].Callsign)
-	assert.False(t, lm.Players[PostEast].Connected, "сокет гостя ещё не открыт")
-	assert.Equal(t, PostWest, lm.You)
+	require.NotNil(t, lm.Players[game.PostEast])
+	assert.Equal(t, CallsignSecond, lm.Players[game.PostEast].Callsign)
+	assert.False(t, lm.Players[game.PostEast].Connected, "сокет гостя ещё не открыт")
+	assert.Equal(t, game.PostWest, lm.You)
 }
 
 // Join в остановленный канал: места раздаёт горутина канала, её уже нет - Join не
@@ -644,7 +646,7 @@ func TestJoin_StoppedChannel(t *testing.T) {
 	t.Parallel()
 
 	r := newTestRegistry(t)
-	ch, _, err := r.Create(t.Context(), GameModeCoop)
+	ch, _, err := r.Create(t.Context(), game.ModeCoop)
 	require.NoError(t, err)
 	r.Remove(ch.ID())
 	ch.Wait()
