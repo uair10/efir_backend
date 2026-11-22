@@ -15,6 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/uair10/efir_backend/internal/game"
+
 	"github.com/uair10/efir_backend/internal/infrastructure/logging"
 )
 
@@ -63,7 +65,7 @@ func TestLog_ChannelHistory(t *testing.T) {
 	}
 
 	r := NewRegistry(testMaxChannels, WithLogger(base))
-	ch, host, err := r.Create(reqCtx("req-create"), GameModeCoop)
+	ch, host, err := r.Create(reqCtx("req-create"), game.ModeCoop)
 	require.NoError(t, err)
 	guest, err := ch.Join(reqCtx("req-join"))
 	require.NoError(t, err)

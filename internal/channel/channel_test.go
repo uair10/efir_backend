@@ -8,11 +8,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/uair10/efir_backend/internal/game"
 )
 
 // newTestChannel - канал вне реестра. Места раздаёт сам канал,
 // реестр его только находит.
-func newTestChannel(t *testing.T, mode GameMode) (*Channel, Token) {
+func newTestChannel(t *testing.T, mode game.Mode) (*Channel, Token) {
 	t.Helper()
 
 	ch, tok, err := startChannel(channelConfig{
@@ -32,45 +34,45 @@ func newTestChannel(t *testing.T, mode GameMode) (*Channel, Token) {
 func TestNewChannel_Fields(t *testing.T) {
 	t.Parallel()
 
-	ch, _ := newTestChannel(t, GameModeCoop)
+	ch, _ := newTestChannel(t, game.ModeCoop)
 
 	assert.Equal(t, "c_test", ch.ID())
 	assert.Equal(t, "482117", ch.Code().String())
-	assert.Equal(t, GameModeCoop, ch.Mode())
+	assert.Equal(t, game.ModeCoop, ch.Mode())
 }
 
 // BR-1.3: открывший канал занимает west с позывным "Первый".
 func TestNewChannel_Coop(t *testing.T) {
 	t.Parallel()
 
-	ch, tok := newTestChannel(t, GameModeCoop)
+	ch, tok := newTestChannel(t, game.ModeCoop)
 
-	host, ok := ch.Player(PostWest)
+	host, ok := ch.Player(game.PostWest)
 	require.True(t, ok)
 	assert.Equal(t, CallsignFirst, host.Callsign)
 	assert.False(t, host.Bot)
 	assert.False(t, host.Ready)
 
-	_, ok = ch.Player(PostEast)
+	_, ok = ch.Player(game.PostEast)
 	assert.False(t, ok, "в coop east свободен до входа гостя")
 
 	post, ok := ch.PostOf(tok)
 	require.True(t, ok, "токен хозяина пускает на его пост")
-	assert.Equal(t, PostWest, post)
+	assert.Equal(t, game.PostWest, post)
 }
 
 // BR-1.3: в одиночной смене east сразу занимает бот "Второй", готовый.
 func TestNewChannel_Solo(t *testing.T) {
 	t.Parallel()
 
-	ch, tok := newTestChannel(t, GameModeSolo)
+	ch, tok := newTestChannel(t, game.ModeSolo)
 
-	host, ok := ch.Player(PostWest)
+	host, ok := ch.Player(game.PostWest)
 	require.True(t, ok)
 	assert.Equal(t, CallsignFirst, host.Callsign)
 	assert.False(t, host.Bot)
 
-	bot, ok := ch.Player(PostEast)
+	bot, ok := ch.Player(game.PostEast)
 	require.True(t, ok)
 	assert.Equal(t, CallsignSecond, bot.Callsign)
 	assert.True(t, bot.Bot)
@@ -78,7 +80,7 @@ func TestNewChannel_Solo(t *testing.T) {
 
 	post, ok := ch.PostOf(tok)
 	require.True(t, ok)
-	assert.Equal(t, PostWest, post)
+	assert.Equal(t, game.PostWest, post)
 }
 
 // BR-1.4: гость занимает east и получает первый свободный позывной.
@@ -87,14 +89,14 @@ func TestNewChannel_Solo(t *testing.T) {
 func TestChannel_Join(t *testing.T) {
 	t.Parallel()
 
-	ch, hostTok := newTestChannel(t, GameModeCoop)
+	ch, hostTok := newTestChannel(t, game.ModeCoop)
 
 	guestTok, err := ch.Join(t.Context())
 	require.NoError(t, err)
 	require.False(t, guestTok.IsEmpty())
 	assert.False(t, guestTok.Equal(hostTok), "у каждого игрока свой токен")
 
-	guest, ok := ch.Player(PostEast)
+	guest, ok := ch.Player(game.PostEast)
 	require.True(t, ok)
 	assert.Equal(t, CallsignSecond, guest.Callsign)
 	assert.False(t, guest.Bot)
@@ -102,18 +104,18 @@ func TestChannel_Join(t *testing.T) {
 
 	post, ok := ch.PostOf(guestTok)
 	require.True(t, ok)
-	assert.Equal(t, PostEast, post)
+	assert.Equal(t, game.PostEast, post)
 
 	post, ok = ch.PostOf(hostTok)
 	require.True(t, ok)
-	assert.Equal(t, PostWest, post)
+	assert.Equal(t, game.PostWest, post)
 }
 
 // BR-1.6: оба поста заняты.
 func TestChannel_Join_Full(t *testing.T) {
 	t.Parallel()
 
-	ch, _ := newTestChannel(t, GameModeCoop)
+	ch, _ := newTestChannel(t, game.ModeCoop)
 
 	guestTok, err := ch.Join(t.Context())
 	require.NoError(t, err)
@@ -124,7 +126,7 @@ func TestChannel_Join_Full(t *testing.T) {
 
 	post, ok := ch.PostOf(guestTok)
 	require.True(t, ok, "гость не вытеснен")
-	assert.Equal(t, PostEast, post)
+	assert.Equal(t, game.PostEast, post)
 }
 
 // BR-1.5, BR-1.6: в одиночный канал не войти и напрямую - east занят ботом.
@@ -132,13 +134,13 @@ func TestChannel_Join_Full(t *testing.T) {
 func TestChannel_Join_Solo(t *testing.T) {
 	t.Parallel()
 
-	ch, _ := newTestChannel(t, GameModeSolo)
+	ch, _ := newTestChannel(t, game.ModeSolo)
 
 	tok, err := ch.Join(t.Context())
 	require.ErrorIs(t, err, ErrFull)
 	assert.True(t, tok.IsEmpty())
 
-	bot, ok := ch.Player(PostEast)
+	bot, ok := ch.Player(game.PostEast)
 	require.True(t, ok)
 	assert.True(t, bot.Bot, "бот на месте")
 }
@@ -148,7 +150,7 @@ func TestChannel_Join_Solo(t *testing.T) {
 func TestChannel_Join_Concurrent(t *testing.T) {
 	t.Parallel()
 
-	ch, hostTok := newTestChannel(t, GameModeCoop)
+	ch, hostTok := newTestChannel(t, game.ModeCoop)
 
 	const n = 50
 	var (
@@ -161,7 +163,7 @@ func TestChannel_Join_Concurrent(t *testing.T) {
 	for range n {
 		wg.Go(func() {
 			tok, err := ch.Join(t.Context())
-			_, _ = ch.Player(PostEast)
+			_, _ = ch.Player(game.PostEast)
 			_, _ = ch.PostOf(hostTok)
 
 			mu.Lock()
@@ -185,15 +187,15 @@ func TestChannel_Join_Concurrent(t *testing.T) {
 
 	post, found := ch.PostOf(toks[0])
 	require.True(t, found, "токен победителя привязан к east")
-	assert.Equal(t, PostEast, post)
+	assert.Equal(t, game.PostEast, post)
 }
 
 // BR-1.2: чужой и пустой токен никуда не пускают.
 func TestChannel_PostOf_Foreign(t *testing.T) {
 	t.Parallel()
 
-	ch, _ := newTestChannel(t, GameModeCoop)
-	_, otherTok := newTestChannel(t, GameModeCoop)
+	ch, _ := newTestChannel(t, game.ModeCoop)
+	_, otherTok := newTestChannel(t, game.ModeCoop)
 
 	_, ok := ch.PostOf(otherTok)
 	assert.False(t, ok, "токен другого канала")
@@ -211,7 +213,7 @@ func TestChannel_PostOf_Foreign(t *testing.T) {
 func TestChannel_PostOf_EmptyTokenSolo(t *testing.T) {
 	t.Parallel()
 
-	ch, _ := newTestChannel(t, GameModeSolo)
+	ch, _ := newTestChannel(t, game.ModeSolo)
 
 	_, ok := ch.PostOf(Token{})
 	assert.False(t, ok, "пустой токен не равен токену бота")

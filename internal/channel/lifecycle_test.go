@@ -1,7 +1,6 @@
 package channel
 
 import (
-	"encoding/json"
 	"slices"
 	"testing"
 	"testing/synctest"
@@ -9,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/uair10/efir_backend/internal/game"
 )
 
 const (
@@ -27,7 +28,7 @@ func TestLifecycle_ReconnectGrace(t *testing.T) {
 
 		p.guestConn.Disconnect()
 		synctest.Wait()
-		east := lastLobby(t, p.hostSock).Players[PostEast]
+		east := lastLobby(t, p.hostSock).Players[game.PostEast]
 		require.NotNil(t, east)
 		assert.False(t, east.Connected)
 
@@ -38,10 +39,10 @@ func TestLifecycle_ReconnectGrace(t *testing.T) {
 		guestSock := newFakeSocket()
 		guestConn := mustConnect(t, p.ch, p.guest, guestSock)
 		lobby := nextLobby(t, guestSock).Lobby
-		require.Equal(t, PostEast, lobby.You)
-		require.NotNil(t, lobby.Players[PostEast])
-		assert.True(t, lobby.Players[PostEast].Connected)
-		east = lastLobby(t, p.hostSock).Players[PostEast]
+		require.Equal(t, game.PostEast, lobby.You)
+		require.NotNil(t, lobby.Players[game.PostEast])
+		assert.True(t, lobby.Players[game.PostEast].Connected)
+		east = lastLobby(t, p.hostSock).Players[game.PostEast]
 		require.NotNil(t, east)
 		assert.True(t, east.Connected)
 
@@ -62,7 +63,7 @@ func TestLifecycle_ReconnectGrace(t *testing.T) {
 		require.False(t, ok, "старый токен перестаёт действовать")
 		_, err = p.ch.Connect(t.Context(), p.guest, newFakeSocket())
 		require.ErrorIs(t, err, ErrUnauthorized)
-		assert.Nil(t, lastLobby(t, p.hostSock).Players[PostEast])
+		assert.Nil(t, lastLobby(t, p.hostSock).Players[game.PostEast])
 		_, err = p.ch.Join(t.Context())
 		require.NoError(t, err, "пост доступен новому гостю")
 	})
@@ -81,11 +82,11 @@ func TestLifecycle_HostGraceExpires(t *testing.T) {
 		p.hostConn.Disconnect()
 		synctest.Wait()
 		lobby := lastLobby(t, p.guestSock)
-		require.NotNil(t, lobby.Players[PostWest])
-		assert.False(t, lobby.Players[PostWest].Connected)
+		require.NotNil(t, lobby.Players[game.PostWest])
+		assert.False(t, lobby.Players[game.PostWest].Connected)
 		advance(grace + defaultTick)
 
-		assert.Nil(t, lastLobby(t, p.guestSock).Players[PostWest])
+		assert.Nil(t, lastLobby(t, p.guestSock).Players[game.PostWest])
 		_, ok := p.ch.PostOf(p.host)
 		assert.False(t, ok)
 		_, err := r.ByID(p.ch.ID())
@@ -102,7 +103,7 @@ func TestLifecycle_IdleLobbyExpires(t *testing.T) {
 		r := NewRegistry(1, WithCodeGenerator(codes.next))
 		t.Cleanup(r.Close)
 
-		ch, _, err := r.Create(t.Context(), GameModeCoop)
+		ch, _, err := r.Create(t.Context(), game.ModeCoop)
 		require.NoError(t, err)
 
 		advance(specLobbyIdleTTL - time.Second)
@@ -120,7 +121,7 @@ func TestLifecycle_IdleLobbyExpires(t *testing.T) {
 			t.Error("горутина канала живёт после истечения TTL")
 		}
 
-		replacement, _, err := r.Create(t.Context(), GameModeCoop)
+		replacement, _, err := r.Create(t.Context(), game.ModeCoop)
 		require.NoError(t, err, "слот и код должны освободиться")
 		assert.Equal(t, ch.Code(), replacement.Code())
 	})
@@ -132,7 +133,7 @@ func TestLifecycle_IdleLobbyTimerResets(t *testing.T) {
 
 	synctest.Test(t, func(t *testing.T) {
 		r := bubbleRegistry(t)
-		ch, tok, err := r.Create(t.Context(), GameModeSolo)
+		ch, tok, err := r.Create(t.Context(), game.ModeSolo)
 		require.NoError(t, err)
 
 		advance(specLobbyIdleTTL - time.Second)
@@ -173,8 +174,8 @@ func TestLifecycle_ShiftReconnectAndExpiry(t *testing.T) {
 
 		lobby := nextLobby(t, guestSock).Lobby
 		require.Equal(t, LobbyPhaseShift, lobby.Phase)
-		require.NotNil(t, lobby.Players[PostEast])
-		assert.True(t, lobby.Players[PostEast].Connected)
+		require.NotNil(t, lobby.Players[game.PostEast])
+		assert.True(t, lobby.Players[game.PostEast].Connected)
 
 		snapshot := lastLifecycleSnapshot(t, drain(guestSock))
 		require.NotNil(t, snapshot, "возврат в смену сразу отдаёт снимок")
@@ -242,29 +243,40 @@ func lastLifecycleSnapshot(t *testing.T, msgs []Message) *lifecycleSnapshot {
 }
 
 type lifecycleMessage struct {
-	Type     string             `json:"type"`
-	Snapshot *lifecycleSnapshot `json:"snapshot"`
-	Events   []lifecycleEvent   `json:"events"`
+	Type     string
+	Snapshot *lifecycleSnapshot
+	Events   []lifecycleEvent
 }
 
 type lifecycleSnapshot struct {
-	Phase  string `json:"phase"`
-	Energy int    `json:"energy"`
-	Paused bool   `json:"paused"`
+	Phase  string
+	Energy int
+	Paused bool
 }
 
 type lifecycleEvent struct {
-	Kind string `json:"kind"`
-	From string `json:"from"`
-	Text string `json:"text"`
+	Kind string
+	From string
+	Text string
 }
 
-// decodeLifecycleMessage читает поля протокола, которые проверяет тест.
+// decodeLifecycleMessage extracts the domain messages relevant to the lifecycle.
 func decodeLifecycleMessage(t *testing.T, msg Message) lifecycleMessage {
 	t.Helper()
-	raw, err := json.Marshal(msg.Payload)
-	require.NoError(t, err)
-	var decoded lifecycleMessage
-	require.NoError(t, json.Unmarshal(raw, &decoded))
-	return decoded
+	switch payload := msg.Payload.(type) {
+	case game.Snapshot:
+		return lifecycleMessage{Type: "game", Snapshot: &lifecycleSnapshot{
+			Phase: string(payload.Phase), Energy: payload.Energy, Paused: payload.Paused,
+		}}
+	case []game.Event:
+		decoded := lifecycleMessage{Type: "events"}
+		for _, event := range payload {
+			if radio, ok := event.(game.RadioEvent); ok {
+				decoded.Events = append(decoded.Events, lifecycleEvent{Kind: "radio", From: string(radio.From), Text: radio.Text})
+			}
+		}
+		return decoded
+	default:
+		return lifecycleMessage{}
+	}
 }

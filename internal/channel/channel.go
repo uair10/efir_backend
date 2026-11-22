@@ -8,6 +8,7 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/uair10/efir_backend/internal/game"
 	"github.com/uair10/efir_backend/internal/infrastructure/logging"
 )
 
@@ -27,7 +28,7 @@ const postsPerChannel = 2
 type Channel struct {
 	id       string
 	code     Code
-	mode     GameMode
+	mode     game.Mode
 	created  time.Time
 	tick     time.Duration
 	log      *slog.Logger // channel_id, channel_code
@@ -42,7 +43,7 @@ type Channel struct {
 type channelConfig struct {
 	id       string
 	code     Code
-	mode     GameMode
+	mode     game.Mode
 	tick     time.Duration // шаг времени канала (GAME_TICK)
 	log      *slog.Logger  // базовый логгер; канал добавит channel_id и channel_code
 	registry *Registry
@@ -95,7 +96,7 @@ func (c *Channel) ID() string { return c.id }
 func (c *Channel) Code() Code { return c.code }
 
 // Mode - режим смены, solo или coop.
-func (c *Channel) Mode() GameMode { return c.mode }
+func (c *Channel) Mode() game.Mode { return c.mode }
 
 // Join сажает гостя на east с первым свободным позывным, рассылает лобби
 // подключённым и возвращает токен гостя. Событие входа пишется в лог
@@ -112,7 +113,7 @@ func (c *Channel) Join(ctx context.Context) (Token, error) {
 
 // Player возвращает копию игрока на посту. ok == false - пост свободен
 // или канал остановлен.
-func (c *Channel) Player(post Post) (Player, bool) {
+func (c *Channel) Player(post game.Post) (Player, bool) {
 	req := newRequest[Player]()
 	p, err := ask(c, req, playerEvent{request: req, post: post})
 	return p, err == nil
@@ -120,8 +121,8 @@ func (c *Channel) Player(post Post) (Player, bool) {
 
 // PostOf опознаёт игрока по токену. ok == false - токен не из этого канала
 // или канал остановлен. Бот не опознаётся ничем: у него пустой токен.
-func (c *Channel) PostOf(tok Token) (Post, bool) {
-	req := newRequest[Post]()
+func (c *Channel) PostOf(tok Token) (game.Post, bool) {
+	req := newRequest[game.Post]()
 	post, err := ask(c, req, postOfEvent{request: req, tok: tok})
 	return post, err == nil
 }

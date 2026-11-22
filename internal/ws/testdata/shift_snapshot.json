@@ -1,0 +1,58 @@
+{
+  "type": "game",
+  "snapshot": {
+    "phase": "briefing",
+    "night": 1,
+    "paused": false,
+    "canPause": false,
+    "daySecondsRemaining": 150,
+    "earlyBonus": 0,
+    "nightSecondsElapsed": 0,
+    "nightAccelerated": false,
+    "energy": 40,
+    "mateEnergy": 70,
+    "fuelStock": 24,
+    "tank": 0,
+    "mateTank": 0,
+    "coreHp": 100,
+    "card": null,
+    "shaft": null,
+    "openGate": null,
+    "noise": false,
+    "jam": false,
+    "coreJammed": false,
+    "ready": [],
+    "vision": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "buildings": [
+      {
+        "type": "turret",
+        "x": 5,
+        "y": 6,
+        "post": "east",
+        "hp": 9.5,
+        "maxHp": 10,
+        "angle": 0,
+        "jammed": false,
+        "hit": false,
+        "kills": 0
+      }
+    ],
+    "enemies": [],
+    "barricades": [],
+    "gateIntel": {
+      "E": {
+        "lost": true
+      },
+      "W": {
+        "lost": false,
+        "estimate": 0,
+        "main": false
+      }
+    },
+    "drones": [],
+    "pings": [],
+    "squarePings": [],
+    "energyRequests": [],
+    "scoutedToday": false
+  }
+}

@@ -2,7 +2,6 @@ package ws
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/coder/websocket"
@@ -48,7 +47,7 @@ func (s *Socket) writeLoop(ctx context.Context) error {
 // writeAll пишет сообщения по порядку.
 func (s *Socket) writeAll(ctx context.Context, queue []channel.Message) error {
 	for _, m := range queue {
-		data, err := json.Marshal(m.Payload)
+		data, err := marshalPayload(m.Payload)
 		if err != nil {
 			// Payload не сериализуется - это баг вызывающего, не клиента.
 			// Логируем и пропускаем, чтобы одно сообщение не рвало соединение.

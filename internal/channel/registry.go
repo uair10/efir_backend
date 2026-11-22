@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/uair10/efir_backend/internal/game"
 	"github.com/uair10/efir_backend/internal/infrastructure/logging"
 )
 
@@ -107,7 +108,7 @@ func NewRegistry(maxChannels int, opts ...Option) *Registry {
 //     при этом не вызывается.
 //   - ErrCodeCollision - maxCodeAttempts кодов подряд заняты.
 //   - ошибка генератора кода или токена, обернутая.
-func (r *Registry) Create(ctx context.Context, mode GameMode) (*Channel, Token, error) {
+func (r *Registry) Create(ctx context.Context, mode game.Mode) (*Channel, Token, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
@@ -164,7 +165,7 @@ func (r *Registry) ByCode(code Code) (*Channel, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	ch, ok := r.byCode[code]
-	if !ok || ch.mode == GameModeSolo {
+	if !ok || ch.mode == game.ModeSolo {
 		return nil, ErrNotFound
 	}
 	return ch, nil

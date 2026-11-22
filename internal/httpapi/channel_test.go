@@ -12,6 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/uair10/efir_backend/internal/game"
+
 	"github.com/uair10/efir_backend/internal/channel"
 )
 
@@ -60,7 +62,7 @@ func decodeChannel(t *testing.T, rec *httptest.ResponseRecorder, wantStatus int)
 }
 
 // mustCreate открывает канал через HTTP и возвращает ответ.
-func mustCreate(t *testing.T, h http.Handler, mode channel.GameMode) channelResp {
+func mustCreate(t *testing.T, h http.Handler, mode game.Mode) channelResp {
 	t.Helper()
 	return decodeChannel(t, createChannel(t, h, `{"mode":"`+string(mode)+`"}`), http.StatusCreated)
 }
@@ -69,7 +71,7 @@ func mustCreate(t *testing.T, h http.Handler, mode channel.GameMode) channelResp
 func TestCreateChannel_OK(t *testing.T) {
 	t.Parallel()
 
-	for _, mode := range []channel.GameMode{channel.GameModeSolo, channel.GameModeCoop} {
+	for _, mode := range []game.Mode{game.ModeSolo, game.ModeCoop} {
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 
@@ -93,7 +95,7 @@ func TestCreateChannel_OK(t *testing.T) {
 			require.NoError(t, err)
 			post, ok := ch.PostOf(tok)
 			require.True(t, ok, "токен из ответа не опознан каналом")
-			assert.Equal(t, channel.PostWest, post)
+			assert.Equal(t, game.PostWest, post)
 		})
 	}
 }
@@ -103,8 +105,8 @@ func TestCreateChannel_Unique(t *testing.T) {
 	t.Parallel()
 
 	h, reg := newChannelsHandler(t, 10)
-	a := mustCreate(t, h, channel.GameModeCoop)
-	b := mustCreate(t, h, channel.GameModeCoop)
+	a := mustCreate(t, h, game.ModeCoop)
+	b := mustCreate(t, h, game.ModeCoop)
 
 	assert.NotEqual(t, a.ChannelID, b.ChannelID)
 	assert.NotEqual(t, a.Code, b.Code)
@@ -144,8 +146,8 @@ func TestCreateChannel_TooMany(t *testing.T) {
 	t.Parallel()
 
 	h, reg := newChannelsHandler(t, 2)
-	mustCreate(t, h, channel.GameModeCoop)
-	mustCreate(t, h, channel.GameModeSolo) // одиночный тоже в счёт
+	mustCreate(t, h, game.ModeCoop)
+	mustCreate(t, h, game.ModeSolo) // одиночный тоже в счёт
 
 	rec := createChannel(t, h, `{"mode":"coop"}`)
 	checkError(t, rec, http.StatusServiceUnavailable)
@@ -157,7 +159,7 @@ func TestJoinChannel_OK(t *testing.T) {
 	t.Parallel()
 
 	h, reg := newChannelsHandler(t, 10)
-	host := mustCreate(t, h, channel.GameModeCoop)
+	host := mustCreate(t, h, game.ModeCoop)
 
 	guest := decodeChannel(t, joinChannel(t, h, host.Code), http.StatusOK)
 
@@ -172,7 +174,7 @@ func TestJoinChannel_OK(t *testing.T) {
 	require.NoError(t, err)
 	post, ok := ch.PostOf(tok)
 	require.True(t, ok)
-	assert.Equal(t, channel.PostEast, post)
+	assert.Equal(t, game.PostEast, post)
 }
 
 // BR-2.2, BR-2.3: статусы входа по коду.
@@ -219,7 +221,7 @@ func TestJoinChannel_Errors(t *testing.T) {
 			name: "BR-2.3, BR-1.5: одиночный канал выглядит несуществующим",
 			prepare: func(t *testing.T, h http.Handler) string {
 				t.Helper()
-				return mustCreate(t, h, channel.GameModeSolo).Code
+				return mustCreate(t, h, game.ModeSolo).Code
 			},
 			wantStatus: http.StatusNotFound,
 		},
@@ -227,7 +229,7 @@ func TestJoinChannel_Errors(t *testing.T) {
 			name: "BR-2.3, BR-1.6: оба поста заняты",
 			prepare: func(t *testing.T, h http.Handler) string {
 				t.Helper()
-				code := mustCreate(t, h, channel.GameModeCoop).Code
+				code := mustCreate(t, h, game.ModeCoop).Code
 				decodeChannel(t, joinChannel(t, h, code), http.StatusOK)
 				return code
 			},
@@ -253,7 +255,7 @@ func TestJoinChannel_SoloIndistinguishable(t *testing.T) {
 	t.Parallel()
 
 	h, _ := newChannelsHandler(t, 10)
-	solo := mustCreate(t, h, channel.GameModeSolo)
+	solo := mustCreate(t, h, game.ModeSolo)
 
 	missing := "999999"
 	if solo.Code == missing {

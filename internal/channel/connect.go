@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 
+	"github.com/uair10/efir_backend/internal/game"
 	"github.com/uair10/efir_backend/internal/infrastructure/logging"
 )
 
@@ -18,10 +19,8 @@ type ServerMessageType string
 
 // Типы сообщений сервера.
 const (
-	ServerMessageLobby  ServerMessageType = "lobby"
-	ServerMessageError  ServerMessageType = "error"
-	ServerMessageGame   ServerMessageType = "game"
-	ServerMessageEvents ServerMessageType = "events"
+	ServerMessageLobby ServerMessageType = "lobby"
+	ServerMessageError ServerMessageType = "error"
 )
 
 // LobbyMessage - сообщение "lobby": состояние лобби для одного игрока.
@@ -42,12 +41,12 @@ const (
 
 // LobbyState - лобби глазами игрока на посту You.
 type LobbyState struct {
-	Code      string                `json:"code"`
-	Mode      GameMode              `json:"mode"`
-	Phase     LobbyPhase            `json:"phase"`     // "lobby" | "starting" | "shift"
-	Countdown *int                  `json:"countdown"` // секунды до старта; nil - отсчёта нет
-	You       Post                  `json:"you"`       // пост получателя: лобби у каждого своё
-	Players   map[Post]*LobbyPlayer `json:"players"`   // nil - пост свободен
+	Code      string                     `json:"code"`
+	Mode      game.Mode                  `json:"mode"`
+	Phase     LobbyPhase                 `json:"phase"`     // "lobby" | "starting" | "shift"
+	Countdown *int                       `json:"countdown"` // секунды до старта; nil - отсчёта нет
+	You       game.Post                  `json:"you"`       // пост получателя: лобби у каждого своё
+	Players   map[game.Post]*LobbyPlayer `json:"players"`   // nil - пост свободен
 }
 
 // LobbyPlayer - игрок на посту, как его видит лобби.
@@ -129,13 +128,13 @@ type Socket interface {
 // сокета, и горутина канала.
 type Connection struct {
 	ch   *Channel
-	post Post
+	post game.Post
 	sock Socket
 	log  *slog.Logger // логгер сессии: request_id апгрейда, channel_id, post
 }
 
 // Post - пост, к которому привязано подключение.
-func (conn *Connection) Post() Post { return conn.post }
+func (conn *Connection) Post() game.Post { return conn.post }
 
 // Receive принимает сырое входящее сообщение сокета. Разбор - здесь, в
 // горутине чтения; выполнение - в горутине канала. Ответа не ждёт: отказ

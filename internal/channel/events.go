@@ -2,6 +2,8 @@ package channel
 
 import (
 	"log/slog"
+
+	"github.com/uair10/efir_backend/internal/game"
 )
 
 // event - сообщение горутине канала (ADR-002).
@@ -37,7 +39,7 @@ type connectEvent struct {
 
 // postOfEvent - на каком посту владелец токена (Channel.PostOf).
 type postOfEvent struct {
-	request[Post]
+	request[game.Post]
 
 	tok Token
 }
@@ -46,7 +48,7 @@ type postOfEvent struct {
 type playerEvent struct {
 	request[Player]
 
-	post Post
+	post game.Post
 }
 
 // commandEvent - команда от клиента. Без ответа: отказ room шлёт в сокет сам.

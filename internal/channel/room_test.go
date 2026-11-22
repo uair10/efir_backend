@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/uair10/efir_backend/internal/game"
+
 	"github.com/uair10/efir_backend/internal/infrastructure/logging"
 )
 
@@ -21,7 +23,7 @@ type testRoom struct {
 	hostSock *fakeSocket
 }
 
-func newTestRoom(t *testing.T, mode GameMode) testRoom {
+func newTestRoom(t *testing.T, mode game.Mode) testRoom {
 	t.Helper()
 	r, host, err := newRoom(mustCode(t, "482117"), mode, logging.Discard())
 	require.NoError(t, err)
@@ -54,7 +56,7 @@ func (r testRoom) readyCoop(t *testing.T) *Connection {
 func TestRoom_CountdownByTicks(t *testing.T) {
 	t.Parallel()
 
-	r := newTestRoom(t, GameModeCoop)
+	r := newTestRoom(t, game.ModeCoop)
 	r.readyCoop(t)
 	require.Equal(t, LobbyPhaseStarting, r.phase)
 
@@ -77,7 +79,7 @@ func TestRoom_CountdownByTicks(t *testing.T) {
 func TestRoom_UnreadyCancelsCountdown(t *testing.T) {
 	t.Parallel()
 
-	r := newTestRoom(t, GameModeCoop)
+	r := newTestRoom(t, game.ModeCoop)
 	guestConn := r.readyCoop(t)
 	r.tick(time.Second)
 	drain(r.hostSock)
@@ -94,7 +96,7 @@ func TestRoom_UnreadyCancelsCountdown(t *testing.T) {
 func TestRoom_SoloShiftOnReady(t *testing.T) {
 	t.Parallel()
 
-	r := newTestRoom(t, GameModeSolo)
+	r := newTestRoom(t, game.ModeSolo)
 	r.command(r.hostConn, setReady{Ready: true})
 	assert.Equal(t, LobbyPhaseShift, r.phase)
 }
@@ -103,7 +105,7 @@ func TestRoom_SoloShiftOnReady(t *testing.T) {
 func TestRoom_ShiftIsFinal(t *testing.T) {
 	t.Parallel()
 
-	r := newTestRoom(t, GameModeCoop)
+	r := newTestRoom(t, game.ModeCoop)
 	r.readyCoop(t)
 	r.tick(countdownFrom)
 	require.Equal(t, LobbyPhaseShift, r.phase)

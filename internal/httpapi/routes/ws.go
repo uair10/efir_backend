@@ -15,6 +15,8 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/uair10/efir_backend/internal/game"
+
 	"github.com/uair10/efir_backend/internal/channel"
 	"github.com/uair10/efir_backend/internal/httpapi/middleware"
 	"github.com/uair10/efir_backend/internal/infrastructure/logging"
@@ -128,10 +130,15 @@ func (h *ChannelsWS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Run блокируется до закрытия соединения. Входящие - в Receive канала.
+	// Run блокируется до закрытия соединения. Команды лобби идут в Receive канала.
 	// После Run сообщаем каналу, ушёл ли клиент штатно.
 	started := time.Now()
-	runErr := sock.Run(ctx, receiveSafely(ctx, logger, conn.Receive, sock))
+	receive := func(data []byte) {
+		if !ws.HandleGameFrame(data, logger) {
+			conn.Receive(data)
+		}
+	}
+	runErr := sock.Run(ctx, receiveSafely(ctx, logger, receive, sock))
 
 	code := websocket.CloseStatus(runErr)
 	if code == -1 {
@@ -163,7 +170,7 @@ func closeLevel(code websocket.StatusCode) slog.Level {
 
 // authorize находит канал и пост владельца токена.
 // ok == false - любая из причин 401; какая именно, наружу не говорим.
-func (h *ChannelsWS) authorize(r *http.Request) (channel.Token, *channel.Channel, channel.Post, bool) {
+func (h *ChannelsWS) authorize(r *http.Request) (channel.Token, *channel.Channel, game.Post, bool) {
 	tok, err := channel.ParseToken(r.URL.Query().Get("token"))
 	if err != nil {
 		return channel.Token{}, nil, "", false

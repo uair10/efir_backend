@@ -1,0 +1,65 @@
+{
+  "type": "events",
+  "events": [
+    {
+      "kind": "radio",
+      "text": "Напарник пропал из эфира",
+      "from": "sys"
+    },
+    {
+      "kind": "voice",
+      "seconds": 2,
+      "garbled": false,
+      "from": "west"
+    },
+    {
+      "kind": "log",
+      "night": 1,
+      "time": "22:00",
+      "text": "Ночь",
+      "level": "info"
+    },
+    {
+      "kind": "sound",
+      "name": "shot",
+      "x": 0
+    },
+    {
+      "kind": "shot",
+      "x1": 1,
+      "y1": 2,
+      "x2": 3,
+      "y2": 4,
+      "post": "east"
+    },
+    {
+      "kind": "fx",
+      "fx": "burst",
+      "x": 1,
+      "y": 2
+    },
+    {
+      "kind": "core_hit"
+    },
+    {
+      "kind": "gate_flash",
+      "gate": "W"
+    },
+    {
+      "kind": "flash",
+      "text": "Недоступно"
+    },
+    {
+      "kind": "report",
+      "title": "Сводка",
+      "rows": [
+        {
+          "label": "Ядро",
+          "value": "100%"
+        }
+      ],
+      "next": "[ К КАРТЕ ]",
+      "final": false
+    }
+  ]
+}
