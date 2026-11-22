@@ -1,12 +1,28 @@
 package game
 
-// Command - команда клиента во время смены.
+// Command - команда игрока на любом этапе смены.
 // Закрытый тип-сумма: каждая реализация - конкретная команда.
 //
 //sumtype:decl
 type Command interface {
 	isCommand()
 }
+
+// SetCallsign меняет позывной игрока до старта.
+type SetCallsign struct {
+	Callsign Callsign
+}
+
+// isCommand включает смену позывного в закрытый набор команд игры.
+func (SetCallsign) isCommand() {}
+
+// SetReady меняет готовность игрока в лобби.
+type SetReady struct {
+	Ready bool
+}
+
+// isCommand включает изменение готовности в закрытый набор команд игры.
+func (SetReady) isCommand() {}
 
 // CompleteBriefing - игрок подтвердил инструктаж.
 type CompleteBriefing struct{}

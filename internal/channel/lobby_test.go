@@ -11,7 +11,7 @@ package channel
 // Реестр создаётся внутри пузыря (bubbleRegistry), чтобы горутины каналов
 // были в нём же.
 //
-// Синхронные тесты самого room, без горутин, - в room_test.go.
+// Синхронные тесты актора без горутин — в actor_test.go.
 
 import (
 	"encoding/json"
@@ -35,8 +35,8 @@ func bubbleRegistry(t *testing.T) *Registry {
 }
 
 // send передаёт сообщение клиента и ждёт, пока канал его обработает.
-func send(conn *Connection, raw string) {
-	conn.Receive([]byte(raw))
+func send(conn *Connection, cmd game.Command) {
+	conn.Receive(cmd, "")
 	synctest.Wait()
 }
 
@@ -69,8 +69,8 @@ func newLobbyPair(t *testing.T, r *Registry) lobbyPair {
 
 // readyBoth жмёт "Готов" у обоих и вычитывает лобби после этого.
 func (p lobbyPair) readyBoth() {
-	send(p.hostConn, `{"type":"set_ready","ready":true}`)
-	send(p.guestConn, `{"type":"set_ready","ready":true}`)
+	send(p.hostConn, game.SetReady{Ready: true})
+	send(p.guestConn, game.SetReady{Ready: true})
 	drain(p.hostSock)
 	drain(p.guestSock)
 }
@@ -88,11 +88,14 @@ func drain(f *fakeSocket) []Message {
 	}
 }
 
-// lobbies - все лобби из сообщений; не-лобби валят тест.
+// lobbies выбирает сообщения лобби из очереди, которая может содержать снимки смены.
 func lobbies(t *testing.T, msgs []Message) []LobbyState {
 	t.Helper()
 	out := make([]LobbyState, 0, len(msgs))
 	for _, m := range msgs {
+		if _, snapshot := m.Payload.(game.Snapshot); snapshot {
+			continue
+		}
 		out = append(out, decodeLobby(t, m).Lobby)
 	}
 	return out
@@ -124,17 +127,17 @@ func TestLobby_EveryChangeBroadcastsToBoth(t *testing.T) {
 		r := bubbleRegistry(t)
 		p := newLobbyPair(t, r)
 
-		for _, cmd := range []string{
-			`{"type":"set_callsign","callsign":"Сокол"}`,
-			`{"type":"set_ready","ready":true}`,
-			`{"type":"set_ready","ready":false}`,
+		for _, cmd := range []game.Command{
+			game.SetCallsign{Callsign: "Сокол"},
+			game.SetReady{Ready: true},
+			game.SetReady{Ready: false},
 		} {
 			send(p.guestConn, cmd)
 
 			hl := lobbies(t, drain(p.hostSock))
 			gl := lobbies(t, drain(p.guestSock))
-			require.Len(t, hl, 1, "хозяин: одно лобби на изменение (%s)", cmd)
-			require.Len(t, gl, 1, "гость: одно лобби на изменение (%s)", cmd)
+			require.Len(t, hl, 1, "хозяин: одно лобби на изменение (%v)", cmd)
+			require.Len(t, gl, 1, "гость: одно лобби на изменение (%v)", cmd)
 			assert.Equal(t, game.PostWest, hl[0].You)
 			assert.Equal(t, game.PostEast, gl[0].You)
 			assert.Equal(t, hl[0].Players, gl[0].Players, "посты оба видят одинаково")
@@ -154,8 +157,8 @@ func TestLobby_SetCallsign_UnknownIgnored(t *testing.T) {
 		r := bubbleRegistry(t)
 		p := newLobbyPair(t, r)
 
-		for _, cs := range []string{`"Нет такого"`, `""`, `"первый"`, `42`} {
-			send(p.hostConn, `{"type":"set_callsign","callsign":`+cs+`}`)
+		for _, cs := range []game.Callsign{"Нет такого", "", "первый"} {
+			send(p.hostConn, game.SetCallsign{Callsign: cs})
 		}
 		assert.Empty(t, drain(p.hostSock), "отправителю ничего не шлём")
 		assert.Empty(t, drain(p.guestSock), "напарнику ничего не шлём")
@@ -171,7 +174,7 @@ func TestLobby_SetCallsign_TakenGoesToSenderOnly(t *testing.T) {
 		r := bubbleRegistry(t)
 		p := newLobbyPair(t, r)
 
-		send(p.guestConn, `{"type":"set_callsign","callsign":"Первый"}`)
+		send(p.guestConn, game.SetCallsign{Callsign: "Первый"})
 
 		assert.Equal(t, ErrorMessage{Type: ServerMessageError, Code: ErrorCallsignTaken, Message: ErrCallsignTaken.Error()},
 			onlyError(t, p.guestSock))
@@ -187,7 +190,7 @@ func TestLobby_SetCallsign_OwnIsNotTaken(t *testing.T) {
 		r := bubbleRegistry(t)
 		p := newLobbyPair(t, r)
 
-		send(p.hostConn, `{"type":"set_callsign","callsign":"Первый"}`)
+		send(p.hostConn, game.SetCallsign{Callsign: "Первый"})
 
 		assert.Equal(t, CallsignFirst, lastLobby(t, p.hostSock).Players[game.PostWest].Callsign)
 	})
@@ -205,7 +208,7 @@ func TestLobby_SetCallsign_BotsCallsignTaken(t *testing.T) {
 		conn := mustConnect(t, ch, host, sock)
 		drain(sock)
 
-		send(conn, `{"type":"set_callsign","callsign":"Второй"}`)
+		send(conn, game.SetCallsign{Callsign: "Второй"})
 		assert.Equal(t, ErrorCallsignTaken, onlyError(t, sock).Code)
 	})
 }
@@ -218,14 +221,14 @@ func TestLobby_SetCallsign_LockedWhileReady(t *testing.T) {
 		r := bubbleRegistry(t)
 		p := newLobbyPair(t, r)
 
-		send(p.hostConn, `{"type":"set_ready","ready":true}`)
+		send(p.hostConn, game.SetReady{Ready: true})
 		drain(p.hostSock)
-		send(p.hostConn, `{"type":"set_callsign","callsign":"Заря"}`)
+		send(p.hostConn, game.SetCallsign{Callsign: "Заря"})
 		assert.Equal(t, ErrorCallsignLocked, onlyError(t, p.hostSock).Code)
 
-		send(p.hostConn, `{"type":"set_ready","ready":false}`)
+		send(p.hostConn, game.SetReady{Ready: false})
 		drain(p.hostSock)
-		send(p.hostConn, `{"type":"set_callsign","callsign":"Заря"}`)
+		send(p.hostConn, game.SetCallsign{Callsign: "Заря"})
 		assert.Equal(t, Callsign("Заря"), lastLobby(t, p.hostSock).Players[game.PostWest].Callsign)
 	})
 }
@@ -242,18 +245,18 @@ func TestLobby_SetReady_PartnerMissing(t *testing.T) {
 		conn := mustConnect(t, ch, host, sock)
 		drain(sock)
 
-		send(conn, `{"type":"set_ready","ready":true}`)
+		send(conn, game.SetReady{Ready: true})
 		assert.Equal(t, ErrorPartnerMissing, onlyError(t, sock).Code, "лобби не меняется")
 
 		// "Не готов" в одиночестве - не ошибка.
-		send(conn, `{"type":"set_ready","ready":false}`)
+		send(conn, game.SetReady{Ready: false})
 		assert.False(t, lastLobby(t, sock).Players[game.PostWest].Ready)
 
 		// Гость пришёл - теперь можно.
 		_, err = ch.Join(t.Context())
 		require.NoError(t, err)
 		drain(sock)
-		send(conn, `{"type":"set_ready","ready":true}`)
+		send(conn, game.SetReady{Ready: true})
 		assert.True(t, lastLobby(t, sock).Players[game.PostWest].Ready)
 	})
 }
@@ -275,12 +278,12 @@ func TestLobby_Countdown(t *testing.T) {
 		r := bubbleRegistry(t)
 		p := newLobbyPair(t, r)
 
-		send(p.hostConn, `{"type":"set_ready","ready":true}`)
+		send(p.hostConn, game.SetReady{Ready: true})
 		l := lastLobby(t, p.guestSock)
 		assert.Equal(t, LobbyPhaseLobby, l.Phase, "готов один - отсчёта нет")
 		assert.Nil(t, l.Countdown)
 
-		send(p.guestConn, `{"type":"set_ready","ready":true}`)
+		send(p.guestConn, game.SetReady{Ready: true})
 		l = lastLobby(t, p.hostSock)
 		assert.Equal(t, LobbyPhaseStarting, l.Phase)
 		assert.Equal(t, new(3), l.Countdown)
@@ -328,7 +331,7 @@ func TestLobby_CountdownCancelledByUnready(t *testing.T) {
 		advance(1500 * time.Millisecond) // на табло 2 или 1
 		drain(p.hostSock)
 
-		send(p.guestConn, `{"type":"set_ready","ready":false}`)
+		send(p.guestConn, game.SetReady{Ready: false})
 		for _, sock := range []*fakeSocket{p.hostSock, p.guestSock} {
 			l := lastLobby(t, sock)
 			assert.Equal(t, LobbyPhaseLobby, l.Phase)
@@ -338,7 +341,7 @@ func TestLobby_CountdownCancelledByUnready(t *testing.T) {
 		advance(10 * time.Second)
 		assert.Empty(t, drain(p.hostSock), "отменённый отсчёт не тикает")
 
-		send(p.guestConn, `{"type":"set_ready","ready":true}`)
+		send(p.guestConn, game.SetReady{Ready: true})
 		l := lastLobby(t, p.hostSock)
 		assert.Equal(t, LobbyPhaseStarting, l.Phase)
 		assert.Equal(t, new(3), l.Countdown, "отсчёт заново, а не с места остановки")
@@ -379,7 +382,7 @@ func TestLobby_SoloStartsImmediately(t *testing.T) {
 		conn := mustConnect(t, ch, host, sock)
 		drain(sock)
 
-		send(conn, `{"type":"set_ready","ready":true}`)
+		send(conn, game.SetReady{Ready: true})
 		ls := lobbies(t, drain(sock))
 		require.Len(t, ls, 1)
 		assert.Equal(t, LobbyPhaseShift, ls[0].Phase, "starting в одиночной смене не бывает")
@@ -412,8 +415,8 @@ func TestLobby_ShiftIsFinal(t *testing.T) {
 		assert.Nil(t, l.Countdown)
 		drain(p.hostSock)
 
-		send(p.hostConn, `{"type":"set_ready","ready":false}`)
-		send(p.hostConn, `{"type":"set_callsign","callsign":"Заря"}`)
+		send(p.hostConn, game.SetReady{Ready: false})
+		send(p.hostConn, game.SetCallsign{Callsign: "Заря"})
 		assert.Empty(t, drain(p.hostSock), "команды лобби в смене молча игнорируются")
 
 		host, ok := p.ch.Player(game.PostWest)
@@ -436,7 +439,7 @@ func TestLobby_ReplacedConnectionCommandsIgnored(t *testing.T) {
 		drain(newSock)
 		drain(p.guestSock)
 
-		send(p.hostConn, `{"type":"set_callsign","callsign":"Заря"}`)
+		send(p.hostConn, game.SetCallsign{Callsign: "Заря"})
 		assert.Empty(t, drain(p.guestSock))
 
 		host, ok := p.ch.Player(game.PostWest)

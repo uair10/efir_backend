@@ -5,7 +5,6 @@ import (
 	"log/slog"
 
 	"github.com/uair10/efir_backend/internal/game"
-	"github.com/uair10/efir_backend/internal/infrastructure/logging"
 )
 
 // Message - исходящее сообщение канала для сокета.
@@ -29,14 +28,14 @@ type LobbyMessage struct {
 	Lobby LobbyState        `json:"lobby"`
 }
 
-// LobbyPhase - состояние лобби.
-type LobbyPhase string
+// LobbyPhase - этап подготовки смены в представлении канала.
+type LobbyPhase = game.LobbyPhase
 
-// Фазы лобби. EFR-3 шлёт только LobbyPhaseLobby, остальные - для EFR-4+.
+// Состояния лобби в сообщениях канала.
 const (
-	LobbyPhaseLobby    LobbyPhase = "lobby"
-	LobbyPhaseStarting LobbyPhase = "starting"
-	LobbyPhaseShift    LobbyPhase = "shift"
+	LobbyPhaseLobby    = game.LobbyPhaseLobby
+	LobbyPhaseStarting = game.LobbyPhaseStarting
+	LobbyPhaseShift    = game.LobbyPhaseShift
 )
 
 // LobbyState - лобби глазами игрока на посту You.
@@ -136,20 +135,9 @@ type Connection struct {
 // Post - пост, к которому привязано подключение.
 func (conn *Connection) Post() game.Post { return conn.post }
 
-// Receive принимает сырое входящее сообщение сокета. Разбор - здесь, в
-// горутине чтения; выполнение - в горутине канала. Ответа не ждёт: отказ
-// канал сам отправит в сокет.
-//
-// Мусор (не JSON, неизвестный type) игнорируется с записью в debug,
-// соединение живёт (SPEC, раздел 5).
-func (conn *Connection) Receive(data []byte) {
-	cmd, err := parseCommand(data)
-	if err != nil {
-		conn.log.Debug("message ignored", slog.Int("size", len(data)), logging.Err(err))
-		return
-	}
-	conn.log.Debug("message received", slog.String("type", string(cmd.kind())), slog.Int("size", len(data)))
-	conn.ch.tell(commandEvent{conn: conn, cmd: cmd}) // канал закрыт - отвечать некому
+// Receive ставит разобранную команду в очередь канала.
+func (conn *Connection) Receive(cmd game.Command, kind string) {
+	conn.ch.tell(commandEvent{conn: conn, cmd: cmd, kind: kind})
 }
 
 // Disconnect сообщает каналу об обрыве сокета. Не ждёт ответа.

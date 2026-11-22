@@ -8,7 +8,7 @@ import (
 
 // event - сообщение горутине канала (ADR-002).
 //
-// Закрытый тип-сумма: все события перечислены ниже, room.handle разбирает
+// Закрытый тип-сумма: все события перечислены ниже, channelActor.handle разбирает
 // их одним switch. Линтер gochecksumtype проверяет, что ни одно не забыто.
 // Это и есть полный интерфейс актора: чего нет в этом списке, канал не умеет.
 //
@@ -51,10 +51,11 @@ type playerEvent struct {
 	post game.Post
 }
 
-// commandEvent - команда от клиента. Без ответа: отказ room шлёт в сокет сам.
+// commandEvent - команда от клиента. Без ответа: отказ channelActor шлёт в сокет сам.
 type commandEvent struct {
 	conn *Connection
-	cmd  command
+	cmd  game.Command
+	kind string
 }
 
 // disconnectEvent - сокет закрылся. Без ответа.

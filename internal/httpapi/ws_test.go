@@ -414,7 +414,7 @@ func TestWS_GarbageIgnored(t *testing.T) {
 	c := e.dial(t, host)
 	readLobby(t, c)
 
-	for _, s := range []string{`not json`, `{"type":"unknown"}`, `[]`, `{}`} {
+	for _, s := range []string{`not json`, `{"type":"unknown"}`, `[]`, `{}`, `null`, `{"type":42}`, `{"type":"set_callsign","callsign":42}`, `{"type":"command","command":{"kind":"unknown"}}`} {
 		writeText(t, c, s)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), wsWait)
@@ -509,7 +509,7 @@ func TestWS_LogKeysNotDuplicated(t *testing.T) {
 	host := e.create(t, game.ModeCoop)
 	c := e.dial(t, host)
 	readLobby(t, c)
-	writeText(t, c, `{"type":"unknown"}`) // debug "message ignored" от Connection
+	writeText(t, c, `{"type":"unknown"}`) // debug "message ignored" от WebSocket-адаптера
 	require.NoError(t, c.Close(websocket.StatusNormalClosure, ""))
 
 	assert.Eventually(t, func() bool {
@@ -720,4 +720,48 @@ func TestWS_ReconnectGetsBriefingSnapshot(t *testing.T) {
 	assert.Equal(t, game.PhaseBriefing, message.Snapshot.Phase)
 	assert.Equal(t, game.StartEnergy[game.PostWest], message.Snapshot.Energy)
 	assert.Len(t, message.Snapshot.Vision, game.Cols*game.Rows)
+}
+
+// BR-8.1–8.3: команды из WebSocket меняют фазу живой смены.
+func TestWS_ShiftCommandsReachGame(t *testing.T) {
+	t.Parallel()
+
+	e := newWSEnv(t)
+	host := e.create(t, game.ModeSolo)
+	c := e.dial(t, host)
+	readLobby(t, c)
+
+	writeText(t, c, `{"type":"set_ready","ready":true}`)
+	require.Equal(t, channel.LobbyPhaseShift, readLobby(t, c).Phase)
+	readShiftPhase(t, c, game.PhaseBriefing)
+
+	writeText(t, c, `{"type":"command","command":{"kind":"complete_briefing"}}`)
+	day := readShiftPhase(t, c, game.PhaseDay)
+	assert.Equal(t, game.StartEnergy[game.PostWest], day)
+
+	writeText(t, c, `{"type":"command","command":{"kind":"start_night"}}`)
+	night := readShiftPhase(t, c, game.PhaseNight)
+	assert.Greater(t, night, day)
+}
+
+// readShiftPhase ждёт снимок смены в нужной фазе и возвращает энергию поста.
+func readShiftPhase(t *testing.T, c *websocket.Conn, phase game.Phase) int {
+	t.Helper()
+	type shiftSnapshot struct {
+		Phase  game.Phase `json:"phase"`
+		Energy int        `json:"energy"`
+	}
+	deadline := time.Now().Add(wsWait)
+	for time.Now().Before(deadline) {
+		var msg struct {
+			Type     string        `json:"type"`
+			Snapshot shiftSnapshot `json:"snapshot"`
+		}
+		require.NoError(t, json.Unmarshal(readRaw(t, c), &msg))
+		if msg.Type == "game" && msg.Snapshot.Phase == phase {
+			return msg.Snapshot.Energy
+		}
+	}
+	require.FailNowf(t, "снимок не получен", "ожидалась фаза %s", phase)
+	return 0
 }
