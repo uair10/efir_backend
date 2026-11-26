@@ -109,6 +109,9 @@ func (actor *channelActor) connect(ev connectEvent) (*Connection, error) {
 	actor.broadcastLobby()
 	if actor.shift.Started() {
 		actor.sendShiftSnapshot(conn, false)
+		if report, ok := actor.shift.Report(post); ok {
+			conn.sock.Send(Message{Payload: []game.Event{report}})
+		}
 	}
 	return conn, nil
 }
@@ -212,6 +215,7 @@ func (actor *channelActor) logLobbyTransition(before game.Phase) {
 }
 
 // publish отправляет личный ответ только автору команды, а общие события и снимки — всем подключённым.
+// События поста получает только игрок на этом посту.
 func (actor *channelActor) publish(before game.Phase, sender *Connection, update game.ShiftUpdate) {
 	actor.logLobbyTransition(before)
 	if update.LobbyChanged {
@@ -220,9 +224,12 @@ func (actor *channelActor) publish(before game.Phase, sender *Connection, update
 	if sender != nil && len(update.Reply) > 0 {
 		sender.sock.Send(Message{Payload: update.Reply})
 	}
-	for _, conn := range actor.conns {
+	for post, conn := range actor.conns {
 		if len(update.Events) > 0 {
 			conn.sock.Send(Message{Payload: update.Events})
+		}
+		if events := update.PostEvents[post]; len(events) > 0 {
+			conn.sock.Send(Message{Payload: events})
 		}
 		if update.SnapshotChanged {
 			actor.sendShiftSnapshot(conn, true)

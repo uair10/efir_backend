@@ -7,7 +7,7 @@ type RadioFrom string
 const RadioSystem RadioFrom = "sys"
 
 // SoundName - имя звука для клиента.
-type SoundName string
+type SoundName string // TODO Перевести на enum
 
 // ReportRow - строка сводки.
 type ReportRow struct {
@@ -26,7 +26,7 @@ type Event interface {
 // RadioEvent - строка в рации.
 type RadioEvent struct {
 	From    RadioFrom
-	Text    string
+	Text    string // TODO Текста вынести в отдельный модуль
 	Level   LogLevel
 	Garbled bool
 }

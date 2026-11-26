@@ -722,7 +722,7 @@ func TestWS_ReconnectGetsBriefingSnapshot(t *testing.T) {
 	assert.Len(t, message.Snapshot.Vision, game.Cols*game.Rows)
 }
 
-// BR-8.1–8.3: команды из WebSocket меняют фазу живой смены.
+// BR-8.1–8.4, BR-8.7: WebSocket передаёт фазы, таймеры и состояние паузы живой смены.
 func TestWS_ShiftCommandsReachGame(t *testing.T) {
 	t.Parallel()
 
@@ -733,29 +733,47 @@ func TestWS_ShiftCommandsReachGame(t *testing.T) {
 
 	writeText(t, c, `{"type":"set_ready","ready":true}`)
 	require.Equal(t, game.PhaseBriefing, readLobby(t, c).Phase)
-	readShiftPhase(t, c, game.PhaseBriefing)
+	readShiftSnapshot(t, c, func(s shiftSnapshot) bool { return s.Phase == game.PhaseBriefing })
 
 	writeText(t, c, `{"type":"command","command":{"kind":"complete_briefing"}}`)
-	day := readShiftPhase(t, c, game.PhaseDay)
-	assert.Equal(t, game.StartEnergy[game.PostWest], day)
+	day := readShiftSnapshot(t, c, func(s shiftSnapshot) bool {
+		return s.Phase == game.PhaseDay && s.DaySecondsRemaining < game.FirstDaySeconds
+	})
+	assert.Positive(t, day.DaySecondsRemaining)
+	assert.Equal(t, game.StartEnergy[game.PostWest], day.Energy)
 
 	writeText(t, c, `{"type":"command","command":{"kind":"start_night"}}`)
-	night := readShiftPhase(t, c, game.PhaseNight)
-	assert.Greater(t, night, day)
+	night := readShiftSnapshot(t, c, func(s shiftSnapshot) bool {
+		return s.Phase == game.PhaseNight && s.NightSecondsElapsed > 0
+	})
+	assert.Zero(t, night.DaySecondsRemaining)
+	assert.Greater(t, night.Energy, day.Energy)
 
+	writeText(t, c, `{"type":"command","command":{"kind":"set_paused","paused":true}}`)
+	paused := readShiftSnapshot(t, c, func(s shiftSnapshot) bool { return s.Paused })
 	require.NoError(t, c.CloseNow())
 	reconnected := e.dial(t, host)
 	require.Equal(t, game.PhaseNight, readLobby(t, reconnected).Phase)
-	assert.Equal(t, night, readShiftPhase(t, reconnected, game.PhaseNight))
+	assert.Equal(t, paused, readShiftSnapshot(t, reconnected, func(s shiftSnapshot) bool { return s.Paused }))
+
+	writeText(t, reconnected, `{"type":"command","command":{"kind":"set_paused","paused":false}}`)
+	readShiftSnapshot(t, reconnected, func(s shiftSnapshot) bool {
+		return !s.Paused && s.NightSecondsElapsed > paused.NightSecondsElapsed
+	})
 }
 
-// readShiftPhase ждёт снимок смены в нужной фазе и возвращает энергию поста.
-func readShiftPhase(t *testing.T, c *websocket.Conn, phase game.Phase) int {
+//nolint:tagliatelle // имена полей заданы протоколом фронтенда
+type shiftSnapshot struct {
+	Phase               game.Phase `json:"phase"`
+	Energy              int        `json:"energy"`
+	DaySecondsRemaining float64    `json:"daySecondsRemaining"`
+	NightSecondsElapsed float64    `json:"nightSecondsElapsed"`
+	Paused              bool       `json:"paused"`
+}
+
+// readShiftSnapshot пропускает события и промежуточные снимки до нужного состояния.
+func readShiftSnapshot(t *testing.T, c *websocket.Conn, match func(shiftSnapshot) bool) shiftSnapshot {
 	t.Helper()
-	type shiftSnapshot struct {
-		Phase  game.Phase `json:"phase"`
-		Energy int        `json:"energy"`
-	}
 	deadline := time.Now().Add(wsWait)
 	for time.Now().Before(deadline) {
 		var msg struct {
@@ -763,10 +781,10 @@ func readShiftPhase(t *testing.T, c *websocket.Conn, phase game.Phase) int {
 			Snapshot shiftSnapshot `json:"snapshot"`
 		}
 		require.NoError(t, json.Unmarshal(readRaw(t, c), &msg))
-		if msg.Type == "game" && msg.Snapshot.Phase == phase {
-			return msg.Snapshot.Energy
+		if msg.Type == "game" && match(msg.Snapshot) {
+			return msg.Snapshot
 		}
 	}
-	require.FailNowf(t, "снимок не получен", "ожидалась фаза %s", phase)
-	return 0
+	require.FailNow(t, "снимок в ожидаемом состоянии не получен")
+	return shiftSnapshot{}
 }

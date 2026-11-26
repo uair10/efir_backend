@@ -30,12 +30,14 @@ type Participant struct {
 }
 
 // ShiftUpdate описывает изменения, которые нужно показать игрокам.
-// Reply предназначен только отправителю команды, Events доступны обоим постам.
+// Reply предназначен отправителю команды, Events - всем игрокам,
+// PostEvents - только указанным постам.
 type ShiftUpdate struct {
 	LobbyChanged    bool
 	SnapshotChanged bool
 	Events          []Event
 	Reply           []Event
+	PostEvents      map[Post][]Event
 }
 
 // Shift хранит правила и состояние одного экземпляра игры с момента создания лобби.
@@ -48,8 +50,10 @@ type Shift struct {
 	countdown    time.Duration
 	briefed      []Post
 	dayRemaining time.Duration
+	nightElapsed time.Duration
 	paused       bool
 	energy       map[Post]int
+	nightsPassed int
 }
 
 // NewShift занимает западный пост хостом, а в одиночной смене восточный пост ботом.
@@ -133,8 +137,14 @@ func (shift *Shift) ReconnectExpired(post Post) ShiftUpdate {
 
 // Apply проверяет команду от человека на посту и применяет правила текущей фазы.
 func (shift *Shift) Apply(from Post, cmd Command) (ShiftUpdate, error) {
+	if shift.phase == PhaseEnd {
+		return ShiftUpdate{}, nil
+	}
 	p, ok := shift.participants[from]
-	if !ok || p.Bot {
+	if p.Bot {
+		return ShiftUpdate{}, nil
+	}
+	if !ok {
 		return ShiftUpdate{}, ErrInvalidPlayer
 	}
 	switch cmd := cmd.(type) {
@@ -143,30 +153,28 @@ func (shift *Shift) Apply(from Post, cmd Command) (ShiftUpdate, error) {
 	case SetReady:
 		return shift.setReady(from, p, cmd.Ready)
 	case CompleteBriefing:
-		return shift.completeBriefing(from)
+		return shift.completeBriefing(from), nil
 	case StartNight:
-		if shift.phase != PhaseDay || shift.paused {
-			return ShiftUpdate{}, ErrWrongPhase
-		}
-		if from != PostWest {
-			return ShiftUpdate{Reply: []Event{FlashEvent{Text: fmt.Sprintf(
-				"Ночь начинает хост, «%s». Скажите ему голосом (V).", shift.participants[PostWest].Callsign,
-			)}}}, nil
-		}
-		return shift.startNight(false), nil
+		return shift.requestNight(from), nil
+	case StartNextDay:
+		return shift.startNextDay(from), nil
+	case SetPaused:
+		return shift.setPaused(cmd.Paused), nil
 	case Build, Demolish, PlaceBarricade, RemoveBarricade, ScoutGate, PlaceMapMarker,
-		RequestSupport, FulfillEnergyRequest, RefuelDiesel, VoteOnRequest, SetPaused, StartNextDay, Voice:
+		RequestSupport, FulfillEnergyRequest, RefuelDiesel, VoteOnRequest, Voice:
 		return ShiftUpdate{}, ErrUnsupportedCommand
 	}
 	return ShiftUpdate{}, ErrUnsupportedCommand
 }
 
-// Tick двигает отсчёт лобби и дневной таймер. При паузе игровое время стоит.
+// Tick продвигает таймер текущей фазы. Переход открывает следующую фазу
+// с её собственным таймером. Во время паузы игровое время стоит.
 func (shift *Shift) Tick(dt time.Duration) ShiftUpdate {
 	if dt <= 0 || shift.paused {
 		return ShiftUpdate{}
 	}
-	if shift.phase == PhaseStarting {
+	switch shift.phase {
+	case PhaseStarting:
 		before := shift.CountdownSeconds()
 		shift.countdown = max(0, shift.countdown-dt)
 		if shift.countdown == 0 {
@@ -174,15 +182,24 @@ func (shift *Shift) Tick(dt time.Duration) ShiftUpdate {
 			return ShiftUpdate{LobbyChanged: true, SnapshotChanged: true}
 		}
 		return ShiftUpdate{LobbyChanged: shift.CountdownSeconds() != before}
-	}
-	if shift.phase == PhaseDay {
+	case PhaseDay:
 		shift.dayRemaining = max(0, shift.dayRemaining-dt)
 		if shift.dayRemaining == 0 {
 			return shift.startNight(true)
 		}
 		return ShiftUpdate{SnapshotChanged: true}
+	case PhaseNight:
+		const nightDuration = NightSeconds * time.Second
+		// Сравниваем с остатком до сложения, чтобы такт любой длины
+		// заканчивал ночь ровно в 05:00.
+		shift.nightElapsed += min(dt, nightDuration-shift.nightElapsed)
+		if shift.nightElapsed == nightDuration {
+			return shift.finishNight()
+		}
+		return ShiftUpdate{SnapshotChanged: true}
+	default:
+		return ShiftUpdate{}
 	}
-	return ShiftUpdate{}
 }
 
 // CountdownSeconds округляет оставшееся время до старта вверх до целой секунды.
@@ -247,6 +264,7 @@ func (shift *Shift) reconcileLobby() {
 func (shift *Shift) beginBriefing() {
 	shift.countdown = 0
 	shift.phase = PhaseBriefing
+	shift.nightsPassed = 1
 	shift.dayRemaining = FirstDaySeconds * time.Second
 	shift.energy = map[Post]int{PostWest: StartEnergy[PostWest], PostEast: StartEnergy[PostEast]}
 }

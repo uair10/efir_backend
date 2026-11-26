@@ -153,3 +153,70 @@ func (p *panicSocket) Send(m Message) {
 	}
 	p.fakeSocket.Send(m)
 }
+
+// TestActor_DawnReports проверяет адресную рассылку сводок и управление
+// сменой через те же команды, которые принимает WebSocket.
+func TestActor_DawnReports(t *testing.T) {
+	t.Parallel()
+
+	actor := newTestActor(t, game.ModeCoop)
+	guest := actor.readyCoop(t)
+	guestSock, ok := guest.sock.(*fakeSocket)
+	require.True(t, ok)
+	actor.tick(3 * time.Second)
+	actor.command(actor.hostConn, game.CompleteBriefing{}, "complete_briefing")
+	actor.command(guest, game.CompleteBriefing{}, "complete_briefing")
+	actor.command(actor.hostConn, game.StartNight{}, "start_night")
+	drain(actor.hostSock)
+	drain(guestSock)
+
+	actor.command(guest, game.SetPaused{Paused: true}, "set_paused")
+	assert.Empty(t, drain(actor.hostSock))
+	assertFlash(t, drain(guestSock), "В смене с напарником пауза недоступна.")
+	assert.False(t, actor.shift.Snapshot(game.PostEast).Paused)
+
+	actor.tick(game.NightSeconds * time.Second)
+	assertDawnReport(t, drain(actor.hostSock), "[ ДЕНЬ 2 ]")
+	assertDawnReport(t, drain(guestSock), "[ К КАРТЕ ]")
+
+	actor.command(guest, game.StartNextDay{}, "start_next_day")
+	assert.Empty(t, drain(actor.hostSock))
+	assertFlash(t, drain(guestSock), "Следующий день начинает хост, «Первый».")
+	assert.Equal(t, game.PhaseReport, actor.shift.Phase())
+
+	// Хост, вернувшийся после рассвета, снова получает кнопку следующего дня.
+	returned := newFakeSocket()
+	host := actor.mustConnect(t, actor.tokens[game.PostWest], returned)
+	reconnect := drain(returned)
+	require.Len(t, reconnect, 3)
+	assert.Equal(t, []game.Event{game.ReportEvent{Title: "СВОДКА · НОЧЬ 1", Next: "[ ДЕНЬ 2 ]"}}, reconnect[2].Payload)
+	drain(guestSock)
+
+	actor.command(host, game.StartNextDay{}, "start_next_day")
+	for _, sock := range []*fakeSocket{returned, guestSock} {
+		messages := drain(sock)
+		require.Len(t, messages, 1)
+		snapshot, ok := messages[0].Payload.(game.Snapshot)
+		require.True(t, ok)
+		assert.Equal(t, game.PhaseDay, snapshot.Phase)
+		assert.Equal(t, 2, snapshot.Night)
+		assert.InDelta(t, game.DayLen, snapshot.DaySecondsRemaining, 0.001)
+	}
+}
+
+func assertDawnReport(t *testing.T, messages []Message, next string) {
+	t.Helper()
+	require.Len(t, messages, 2)
+	assert.False(t, messages[0].Droppable)
+	assert.Equal(t, []game.Event{game.ReportEvent{Title: "СВОДКА · НОЧЬ 1", Next: next}}, messages[0].Payload)
+	snapshot, ok := messages[1].Payload.(game.Snapshot)
+	require.True(t, ok)
+	assert.Equal(t, game.PhaseReport, snapshot.Phase)
+	assert.InDelta(t, game.NightSeconds, snapshot.NightSecondsElapsed, 0.001)
+}
+
+func assertFlash(t *testing.T, messages []Message, text string) {
+	t.Helper()
+	require.Len(t, messages, 1)
+	assert.Equal(t, []game.Event{game.FlashEvent{Text: text}}, messages[0].Payload)
+}

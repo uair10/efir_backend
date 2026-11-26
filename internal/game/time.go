@@ -29,7 +29,7 @@ const (
 // GameTime - игровое время ночи: "23:40".
 //
 //nolint:revive // имя помощника задано в EFR-6
-func GameTime(nightT float64) string {
+func GameTime(nightT float64) string { // TODO Где используется?
 	const (
 		hoursPerDay    = 24
 		minutesPerHour = 60
