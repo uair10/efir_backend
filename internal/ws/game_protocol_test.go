@@ -75,12 +75,12 @@ func TestDecodeGameCommand(t *testing.T) {
 		{`{"kind":"start_next_day"}`, game.StartNextDay{}},
 		{`{"kind":"voice","seconds":2}`, game.Voice{Seconds: 2}},
 	} {
-		got, err := decodeGameCommand([]byte(tc.body))
+		got, _, err := decodeGameCommandWithKind([]byte(tc.body))
 		require.NoError(t, err, tc.body)
 		assert.Equal(t, tc.want, got, tc.body)
 	}
 	for _, body := range []string{`null`, `{"kind":"briefing_done"}`, `{"kind":"set_paused","paused":"false"}`} {
-		_, err := decodeGameCommand([]byte(body))
+		_, _, err := decodeGameCommandWithKind([]byte(body))
 		assert.Error(t, err, body)
 	}
 }

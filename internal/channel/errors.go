@@ -1,13 +1,17 @@
 package channel
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/uair10/efir_backend/internal/game"
+)
 
 // Доменные ошибки. HTTP-слой отображает их на статусы.
 var (
 	// ErrNotFound - канала нет или он одиночный.
 	ErrNotFound = errors.New("channel not found")
 	// ErrFull - в канале нет свободного поста.
-	ErrFull = errors.New("channel is full")
+	ErrFull = game.ErrPostTaken
 	// ErrTooManyChannels - открыто GAME_MAX_CHANNELS каналов.
 	ErrTooManyChannels = errors.New("too many channels")
 	// ErrCodeCollision - maxCodeAttempts кодов подряд заняты.
@@ -23,9 +27,9 @@ var (
 	// ErrRegistryClosed - реестр закрыт (сервер останавливается), новых каналов нет.
 	ErrRegistryClosed = errors.New("registry closed")
 	// ErrCallsignTaken - позывной уже занят.
-	ErrCallsignTaken = errors.New("callsign taken")
+	ErrCallsignTaken = game.ErrCallsignTaken
 	// ErrCallsignLocked - игрок уже готов, позывной не меняется.
-	ErrCallsignLocked = errors.New("callsign locked")
+	ErrCallsignLocked = game.ErrCallsignLocked
 	// ErrPartnerMissing - "Готов", когда напарника в канале нет.
-	ErrPartnerMissing = errors.New("partner missing")
+	ErrPartnerMissing = game.ErrPartnerMissing
 )

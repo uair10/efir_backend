@@ -22,7 +22,7 @@ const postsPerChannel = 2
 // находят друг друга и вместе играют.
 //
 // Модель - актор (ADR-002). Channel - только ручка: неизменяемые поля и
-// почтовый ящик. Состояние (room) живёт в горутине run и наружу не
+// почтовый ящик. Состояние (channelActor) живёт в горутине run и наружу не
 // попадает. Методы Channel превращают вызов в событие (events.go) и, если
 // нужен ответ, ждут его.
 type Channel struct {
@@ -53,13 +53,13 @@ type channelConfig struct {
 // Возвращает токен хоста: наружу канал его больше не отдаёт.
 func startChannel(cfg channelConfig) (*Channel, Token, error) {
 	log := cfg.log.With(logging.ChannelID(cfg.id), logging.ChannelCode(cfg.code.String()))
-	r, tok, err := newRoom(cfg.code, cfg.mode, log)
+	actor, tok, err := newChannelActor(cfg.code, cfg.mode, log)
 	if err != nil {
 		return nil, Token{}, err
 	}
 	if cfg.registry != nil {
-		r.reconnectGrace = cfg.registry.reconnectGrace
-		r.lobbyIdleTTL = cfg.registry.lobbyIdleTTL
+		actor.reconnectGrace = cfg.registry.reconnectGrace
+		actor.lobbyIdleTTL = cfg.registry.lobbyIdleTTL
 	}
 	c := &Channel{
 		id:       cfg.id,
@@ -73,7 +73,7 @@ func startChannel(cfg channelConfig) (*Channel, Token, error) {
 		stop:     make(chan CloseReason, 1),
 		done:     make(chan struct{}),
 	}
-	go c.run(r)
+	go c.run(actor)
 	return c, tok, nil
 }
 
@@ -154,10 +154,10 @@ func (c *Channel) requestLog(ctx context.Context) *slog.Logger {
 	return logging.FromCtx(ctx).With(logging.ChannelID(c.id))
 }
 
-// run - горутина канала. Единственная, кто видит room.
+// run - горутина канала. Единственная, кто видит channelActor.
 //
 // Тикер двигает отсчёт лобби и проверяет сроки возврата и простоя.
-func (c *Channel) run(r *room) {
+func (c *Channel) run(actor *channelActor) {
 	if c.registry != nil {
 		defer c.registry.running.Done()
 	}
@@ -165,8 +165,8 @@ func (c *Channel) run(r *room) {
 	ticker := time.NewTicker(c.tick)
 	defer ticker.Stop()
 
-	reason := c.runLoop(r, ticker.C)
-	r.closeAll(reason)
+	reason := c.runLoop(actor, ticker.C)
+	actor.closeAll(reason)
 	c.log.Info("channel closed",
 		slog.String("reason", string(reason)),
 		slog.Duration("lifetime", time.Since(c.created)),
@@ -174,7 +174,7 @@ func (c *Channel) run(r *room) {
 }
 
 // runLoop обрабатывает события и такты до запроса на закрытие канала.
-func (c *Channel) runLoop(r *room, ticks <-chan time.Time) CloseReason {
+func (c *Channel) runLoop(actor *channelActor, ticks <-chan time.Time) CloseReason {
 	for {
 		// Убирать опубликованный канал нужно до приёма новых запросов.
 		select {
@@ -184,16 +184,16 @@ func (c *Channel) runLoop(r *room, ticks <-chan time.Time) CloseReason {
 		}
 		select {
 		case ev := <-c.inbox:
-			if r.idleExpired(time.Now()) {
+			if actor.idleExpired(time.Now()) {
 				reason := c.closeRoom()
 				ev.abort(ErrChannelClosed)
 				return reason
 			}
-			if c.handle(r, ev) {
+			if c.handle(actor, ev) {
 				return c.closeRoom()
 			}
 		case <-ticks:
-			if c.tickRoom(r) {
+			if c.tickActor(actor) {
 				return c.closeRoom()
 			}
 		case reason := <-c.stop:
@@ -215,27 +215,27 @@ func (c *Channel) closeRoom() CloseReason {
 
 // handle выполняет событие. Паника - баг сервера: пишем со стеком,
 // ждущему отвечаем ошибкой, канал живёт дальше.
-func (c *Channel) handle(r *room, ev event) bool {
+func (c *Channel) handle(actor *channelActor, ev event) bool {
 	defer func() {
 		if v := recover(); v != nil {
 			c.logPanic(fmt.Sprintf("%T", ev), v)
 			ev.abort(fmt.Errorf("%w: %v", errEventPanic, v))
 		}
 	}()
-	return r.handle(ev)
+	return actor.handle(ev)
 }
 
-// tickRoom - такт с той же защитой от паники, что и handle.
-func (c *Channel) tickRoom(r *room) bool {
+// tickActor - такт с той же защитой от паники, что и handle.
+func (c *Channel) tickActor(actor *channelActor) bool {
 	defer func() {
 		if v := recover(); v != nil {
 			c.logPanic("tick", v)
 		}
 	}()
 	now := time.Now()
-	r.expireDisconnected(now)
-	r.tick(c.tick)
-	return r.idleExpired(now)
+	actor.expireDisconnected(now)
+	actor.tick(c.tick)
+	return actor.idleExpired(now)
 }
 
 func (c *Channel) logPanic(where string, v any) {

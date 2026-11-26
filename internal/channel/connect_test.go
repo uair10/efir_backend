@@ -147,7 +147,7 @@ func TestConnect_HostGetsLobby(t *testing.T) {
 	lm := nextLobby(t, hostSock).Lobby
 	assert.Equal(t, ch.Code().String(), lm.Code)
 	assert.Equal(t, game.ModeCoop, lm.Mode)
-	assert.Equal(t, LobbyPhaseLobby, lm.Phase)
+	assert.Equal(t, game.PhaseLobby, lm.Phase)
 	assert.Nil(t, lm.Countdown)
 	assert.Equal(t, game.PostWest, lm.You)
 
@@ -314,43 +314,6 @@ func TestDisconnect_PartnerSeesDisconnected(t *testing.T) {
 	guestConn.Disconnect()
 }
 
-// NFR-2, раздел 5: не JSON и неизвестный type игнорируются, канал живет.
-func TestReceive_GarbageIgnored(t *testing.T) {
-	t.Parallel()
-
-	r := newTestRegistry(t)
-	ch, host, guest := coopWithGuest(t, r)
-
-	hostSock := newFakeSocket()
-	hostConn := mustConnect(t, ch, host, hostSock)
-	nextLobby(t, hostSock)
-
-	for _, raw := range []string{
-		``,
-		`not json`,
-		`{`,
-		`[]`,
-		`null`,
-		`{"type":"unknown"}`,
-		`{"type":42}`,
-		`{"no_type":true}`,
-	} {
-		hostConn.Receive([]byte(raw))
-	}
-
-	// Канал жив и обслуживает следующее событие.
-	guestSock := newFakeSocket()
-	mustConnect(t, ch, guest, guestSock)
-	nextLobby(t, guestSock)
-	waitLobby(t, hostSock, func(l LobbyMessage) bool { return l.Lobby.Players[game.PostEast].Connected })
-
-	select {
-	case r := <-hostSock.closed:
-		assert.Failf(t, "мусор закрыл сокет", "reason %v", r)
-	default:
-	}
-}
-
 // nextError ждет следующее сообщение клиенту и разбирает его как ошибку.
 func nextError(t *testing.T, f *fakeSocket) ErrorMessage {
 	t.Helper()
@@ -378,18 +341,18 @@ func TestReceive_SetCallsign(t *testing.T) {
 	mustConnect(t, ch, guest, newFakeSocket())
 	waitLobby(t, hostSock, func(l LobbyMessage) bool { return l.Lobby.Players[game.PostEast].Connected })
 
-	hostConn.Receive([]byte(`{"type":"set_callsign","callsign":"Сокол"}`))
+	hostConn.Receive(game.SetCallsign{Callsign: "Сокол"}, "set_callsign")
 	lm := nextLobby(t, hostSock).Lobby
 	assert.Equal(t, Callsign("Сокол"), lm.Players[game.PostWest].Callsign)
 
-	hostConn.Receive([]byte(`{"type":"set_callsign","callsign":"Нет такого"}`))
-	hostConn.Receive([]byte(`{"type":"set_callsign","callsign":"Второй"}`))
+	hostConn.Receive(game.SetCallsign{Callsign: "Нет такого"}, "set_callsign")
+	hostConn.Receive(game.SetCallsign{Callsign: "Второй"}, "set_callsign")
 	assert.Equal(t, ErrorMessage{Type: ServerMessageError, Code: ErrorCallsignTaken, Message: ErrCallsignTaken.Error()},
 		nextError(t, hostSock), "неизвестный позывной молча пропущен, следом - отказ")
 
-	hostConn.Receive([]byte(`{"type":"set_ready","ready":true}`))
+	hostConn.Receive(game.SetReady{Ready: true}, "set_ready")
 	assert.True(t, nextLobby(t, hostSock).Lobby.Players[game.PostWest].Ready)
-	hostConn.Receive([]byte(`{"type":"set_callsign","callsign":"Заря"}`))
+	hostConn.Receive(game.SetCallsign{Callsign: "Заря"}, "set_callsign")
 	assert.Equal(t, ErrorCallsignLocked, nextError(t, hostSock).Code)
 }
 
@@ -425,7 +388,7 @@ func TestChannelStopped_NoDeadlock(t *testing.T) {
 		defer close(done)
 		_, err := ch.Connect(t.Context(), guest, newFakeSocket())
 		assert.Error(t, err, "Connect к остановленному каналу")
-		hostConn.Receive([]byte(`{"type":"set_ready","ready":true}`))
+		hostConn.Receive(game.SetReady{Ready: true}, "set_ready")
 		hostConn.Disconnect()
 	}()
 
@@ -455,8 +418,7 @@ func TestConnect_Concurrent(t *testing.T) {
 			if !assert.NoError(t, err) { //nolint:testifylint // require в горутине нельзя: FailNow только из горутины теста
 				return
 			}
-			conn.Receive([]byte(`{"type":"unknown"}`))
-			conn.Receive([]byte(`garbage`))
+			conn.Receive(game.SetCallsign{Callsign: "Заря"}, "set_callsign")
 			conn.Disconnect()
 		})
 	}

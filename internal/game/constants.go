@@ -40,11 +40,13 @@ func (m Mode) IsValid() bool {
 	return false
 }
 
-// Phase обозначает этап игровой смены.
+// Phase обозначает этап смены от сбора игроков до завершения игры.
 type Phase string
 
 // Фазы игровой смены.
 const (
+	PhaseLobby    Phase = "lobby"
+	PhaseStarting Phase = "starting"
 	PhaseBriefing Phase = "briefing"
 	PhaseDay      Phase = "day"
 	PhaseNight    Phase = "night"

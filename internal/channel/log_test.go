@@ -75,7 +75,7 @@ func TestLog_ChannelHistory(t *testing.T) {
 	require.NoError(t, err)
 	_, err = ch.Connect(reqCtx("req-ws-guest"), guest, guestSock)
 	require.NoError(t, err)
-	hostConn.Receive([]byte(`{"type":"set_callsign","callsign":"Второй"}`)) // отказ - debug
+	hostConn.Receive(game.SetCallsign{Callsign: "Второй"}, "set_callsign") // отказ - debug
 	for {
 		m := <-hostSock.msgs // лобби до отказа пропускаем; канал отвечает сразу
 		if _, ok := m.Payload.(ErrorMessage); ok {

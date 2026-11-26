@@ -130,14 +130,10 @@ func (h *ChannelsWS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Run блокируется до закрытия соединения. Команды лобби идут в Receive канала.
+	// Run блокируется до закрытия соединения. WebSocket разбирает команды для канала.
 	// После Run сообщаем каналу, ушёл ли клиент штатно.
 	started := time.Now()
-	receive := func(data []byte) {
-		if !ws.HandleGameFrame(data, logger) {
-			conn.Receive(data)
-		}
-	}
+	receive := ws.CommandReceiver(logger, conn)
 	runErr := sock.Run(ctx, receiveSafely(ctx, logger, receive, sock))
 
 	code := websocket.CloseStatus(runErr)

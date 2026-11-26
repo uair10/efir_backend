@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 
 	"github.com/uair10/efir_backend/internal/game"
 )
@@ -310,10 +309,7 @@ func eventJSON(event game.Event) (any, error) {
 	return nil, fmt.Errorf("%w: %T", errUnknownGameEvent, event)
 }
 
-var (
-	errUnknownGameEvent   = errors.New("unknown game event")
-	errUnknownGameCommand = errors.New("unknown game command")
-)
+var errUnknownGameEvent = errors.New("unknown game event")
 
 func encodeJSON(payload any) ([]byte, error) {
 	data, err := json.Marshal(payload)
@@ -321,125 +317,4 @@ func encodeJSON(payload any) ([]byte, error) {
 		return nil, fmt.Errorf("encode %T: %w", payload, err)
 	}
 	return data, nil
-}
-
-type gameCommandDecoder func(json.RawMessage) (game.Command, error)
-
-// gameCommandDecoders is the wire contract for shift commands.
-//
-//nolint:gochecknoglobals // fixed dispatch table shared by connections
-var gameCommandDecoders = map[string]gameCommandDecoder{
-	"complete_briefing": commandWithoutFields(game.CompleteBriefing{}),
-	"build":             commandWithFields(func(value buildJSON) game.Build { return game.Build(value) }),
-	"demolish":          commandWithFields(func(value demolishJSON) game.Demolish { return game.Demolish(value) }),
-	"place_barricade":   commandWithFields(func(value placeBarricadeJSON) game.PlaceBarricade { return game.PlaceBarricade(value) }),
-	"remove_barricade":  commandWithFields(func(value removeBarricadeJSON) game.RemoveBarricade { return game.RemoveBarricade(value) }),
-	"scout_gate":        commandWithFields(func(value scoutGateJSON) game.ScoutGate { return game.ScoutGate(value) }),
-	"place_map_marker":  commandWithFields(func(value placeMapMarkerJSON) game.PlaceMapMarker { return game.PlaceMapMarker(value) }),
-	"request_support":   commandWithFields(func(value requestSupportJSON) game.RequestSupport { return game.RequestSupport(value) }),
-	"fulfill_energy_request": commandWithFields(func(value fulfillEnergyRequestJSON) game.FulfillEnergyRequest {
-		return game.FulfillEnergyRequest(value)
-	}),
-	"refuel_diesel":   commandWithoutFields(game.RefuelDiesel{}),
-	"vote_on_request": commandWithFields(func(value voteOnRequestJSON) game.VoteOnRequest { return game.VoteOnRequest(value) }),
-	"start_night":     commandWithoutFields(game.StartNight{}),
-	"set_paused":      commandWithFields(func(value setPausedJSON) game.SetPaused { return game.SetPaused(value) }),
-	"start_next_day":  commandWithoutFields(game.StartNextDay{}),
-	"voice":           commandWithFields(func(value voiceJSON) game.Voice { return game.Voice(value) }),
-}
-
-func commandWithFields[T game.Command, U any](convert func(U) T) gameCommandDecoder {
-	return func(data json.RawMessage) (game.Command, error) {
-		var value U
-		if err := json.Unmarshal(data, &value); err != nil {
-			return nil, fmt.Errorf("decode %T: %w", value, err)
-		}
-		return convert(value), nil
-	}
-}
-
-func commandWithoutFields(cmd game.Command) gameCommandDecoder {
-	return func(json.RawMessage) (game.Command, error) { return cmd, nil }
-}
-
-// decodeGameCommand reads the inner command in a shift message.
-//
-//nolint:ireturn // the simulation receives a closed set of command types
-func decodeGameCommand(data json.RawMessage) (game.Command, error) {
-	var envelope struct {
-		Kind string `json:"kind"`
-	}
-	if err := json.Unmarshal(data, &envelope); err != nil {
-		return nil, fmt.Errorf("decode game command kind: %w", err)
-	}
-	decode, ok := gameCommandDecoders[envelope.Kind]
-	if !ok {
-		return nil, fmt.Errorf("%w: %q", errUnknownGameCommand, envelope.Kind)
-	}
-	return decode(data)
-}
-
-type buildJSON struct {
-	Building game.BuildingType `json:"building"`
-	X        int               `json:"x"`
-	Y        int               `json:"y"`
-}
-
-type demolishJSON struct {
-	X int `json:"x"`
-	Y int `json:"y"`
-}
-
-type placeBarricadeJSON struct {
-	Gate game.GateID `json:"gate"`
-}
-
-type removeBarricadeJSON struct {
-	Gate game.GateID `json:"gate"`
-}
-
-type scoutGateJSON struct {
-	Gate game.GateID `json:"gate"`
-}
-
-type placeMapMarkerJSON struct {
-	X float64 `json:"x"`
-	Y float64 `json:"y"`
-}
-
-type requestSupportJSON struct {
-	Square string `json:"square"`
-}
-
-//nolint:tagliatelle // the WebSocket contract uses camelCase fields
-type fulfillEnergyRequestJSON struct {
-	RequestID int `json:"requestId"`
-}
-
-type voteOnRequestJSON struct {
-	Yes bool `json:"yes"`
-}
-
-type setPausedJSON struct {
-	Paused bool `json:"paused"`
-}
-
-type voiceJSON struct {
-	Seconds int `json:"seconds"`
-}
-
-// HandleGameFrame recognizes shift commands and validates their wire format.
-// The shift simulation starts handling commands in EFR-8.
-func HandleGameFrame(data []byte, log *slog.Logger) bool {
-	var envelope struct {
-		Type    string          `json:"type"`
-		Command json.RawMessage `json:"command"`
-	}
-	if err := json.Unmarshal(data, &envelope); err != nil || envelope.Type != "command" {
-		return false
-	}
-	if _, err := decodeGameCommand(envelope.Command); err != nil {
-		log.Debug("game command ignored", "error", err)
-	}
-	return true
 }

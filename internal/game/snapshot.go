@@ -130,7 +130,7 @@ type EnergyRequest struct {
 	Cost     int
 }
 
-// BriefingSnapshot returns the opening view, before the simulation starts.
+// BriefingSnapshot возвращает снапшот игры на этапе брифинга.
 func BriefingSnapshot(viewer Post, mode Mode, paused bool) Snapshot {
 	return Snapshot{
 		Phase:               PhaseBriefing,

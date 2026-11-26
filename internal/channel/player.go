@@ -13,24 +13,12 @@ type Player struct {
 	Callsign Callsign
 	Ready    bool
 	Bot      bool
-
-	token Token // у бота пустой: пустой токен не совпадает ни с каким
 }
 
 // posts - все посты канала по порядку.
 //
 //nolint:gochecknoglobals // справочник только для чтения
 var posts = [...]game.Post{game.PostWest, game.PostEast}
-
-// newPlayer - человек с токеном, еще не готов (хозяин или гость).
-func newPlayer(callsign Callsign, token Token) *Player {
-	return &Player{Callsign: callsign, token: token}
-}
-
-// newBot - бот одиночной смены: без токена, сразу готов.
-func newBot() *Player {
-	return &Player{Callsign: CallsignSecond, Ready: true, Bot: true}
-}
 
 func (p Player) String() string {
 	return fmt.Sprintf("Player(%s)", p.Callsign)
